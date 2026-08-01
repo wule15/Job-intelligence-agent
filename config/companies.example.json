@@ -1,0 +1,62 @@
+{
+  "_readme": [
+    "Companies whose careers pages the agent reads directly, through their",
+    "applicant tracking system. No API key, no quota, full postings.",
+    "",
+    "Copy this file to companies.json and edit it. companies.json is",
+    "gitignored, so your target list stays private.",
+    "",
+    "HOW TO ADD A COMPANY",
+    "Open the company careers page and read the URL.",
+    "  boards.greenhouse.io/SLUG            -> ats greenhouse, slug SLUG",
+    "  jobs.lever.co/SLUG                   -> ats lever,      slug SLUG",
+    "  jobs.ashbyhq.com/SLUG                -> ats ashby,      slug SLUG",
+    "  jobs.smartrecruiters.com/SLUG        -> ats smartrecruiters, slug SLUG",
+    "  TENANT.wdN.myworkdayjobs.com/SITE    -> ats workday, slug TENANT,",
+    "                                          wd N, site SITE",
+    "",
+    "Workday needs all three. From",
+    "https://wattswater.wd5.myworkdayjobs.com/External you get",
+    "slug wattswater, wd 5, site External.",
+    "",
+    "max_jobs caps a single employer so a large board cannot flood the",
+    "digest. Bosch alone lists over 4,000 postings.",
+    "",
+    "Every entry below was checked against the live endpoint AND the",
+    "returned job titles were read to confirm they belong to that company.",
+    "Do both. Searching the web for a Workday URL turns up plenty of live",
+    "tenants that belong to somebody else entirely, and a tenant that",
+    "returns 200 with 2,000 jobs looks identical to a correct one until",
+    "you read the listings.",
+    "",
+    "Slugs change when a company switches vendor. A board that stops",
+    "responding is reported by name in the run summary, never hidden."
+  ],
+
+  "companies": [
+    { "name": "Flowserve", "ats": "workday", "slug": "flowserve", "wd": "1", "site": "applied", "max_jobs": 150 },
+    { "name": "KSB", "ats": "workday", "slug": "ksb", "wd": "3", "site": "KSB_ExternalCareerSite", "max_jobs": 150 },
+    { "name": "Alfa Laval", "ats": "workday", "slug": "alfalaval", "wd": "3", "site": "Alfa_Laval_jobs", "max_jobs": 150 },
+    { "name": "Watts Water Technologies", "ats": "workday", "slug": "wattswater", "wd": "5", "site": "External", "max_jobs": 150 },
+    { "name": "Sandvik Coromant", "ats": "workday", "slug": "sandvik", "wd": "3", "site": "coromant-jobs" },
+
+    { "name": "Bosch", "ats": "smartrecruiters", "slug": "BoschGroup", "max_jobs": 200 },
+    { "name": "Continental", "ats": "smartrecruiters", "slug": "ContinentalAG" },
+    { "name": "Konecranes", "ats": "smartrecruiters", "slug": "Konecranes", "max_jobs": 150 },
+
+    { "name": "Helsing", "ats": "greenhouse", "slug": "helsing" },
+    { "name": "Epirus", "ats": "greenhouse", "slug": "epirus" },
+    { "name": "Comand AI", "ats": "ashby", "slug": "comand-ai" },
+
+    { "name": "Rocket Lab", "ats": "greenhouse", "slug": "rocketlab", "max_jobs": 200 },
+    { "name": "Relativity Space", "ats": "greenhouse", "slug": "relativity", "max_jobs": 200 },
+    { "name": "Astranis", "ats": "greenhouse", "slug": "astranis" },
+    { "name": "Vast", "ats": "greenhouse", "slug": "vast" },
+    { "name": "Ursa Major", "ats": "greenhouse", "slug": "ursamajor" },
+    { "name": "Archer Aviation", "ats": "greenhouse", "slug": "archer" },
+
+    { "name": "Lucid Motors", "ats": "greenhouse", "slug": "lucidmotors", "max_jobs": 200 },
+    { "name": "Divergent Technologies", "ats": "greenhouse", "slug": "divergent" },
+    { "name": "Chaos Industries", "ats": "greenhouse", "slug": "chaosindustries" }
+  ]
+}
