@@ -1,0 +1,6 @@
+# Test dependencies. Not needed to run the agent.
+#   pip install -r requirements-dev.txt
+#   pytest
+-r requirements.txt
+
+pytest>=8.0

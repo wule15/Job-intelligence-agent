@@ -1,0 +1,75 @@
+# ---------------------------------------------------------------------------
+# Secrets
+# ---------------------------------------------------------------------------
+.env
+.env.*
+!.env.example
+
+credentials.json
+token.json
+client_secret*.json
+*.pem
+*.p12
+*.key
+
+# ---------------------------------------------------------------------------
+# Runtime data. This project runs against one person's real job search,
+# so none of it belongs in version control.
+# ---------------------------------------------------------------------------
+
+# SQLite database: jobs, applications, generated letters
+data/
+*.db
+*.db-wal
+*.db-shm
+*.sqlite3
+
+# Logs. Error handlers have historically echoed request URLs containing tokens.
+logs/
+*.log
+
+# Generated cover letters
+output/
+
+# Source CVs and LinkedIn profile export, used as scoring input
+resumes/
+linkedin profile/
+*.pdf
+*.docx
+
+# Skill cache extracted from the CVs
+cache/
+keywords.json
+
+# Local run configuration. The example file is committed, your real
+# company list is not. A directory cannot be unignored from inside, so
+# this ignores the contents rather than the directory.
+config/*
+!config/companies.example.json
+
+# ---------------------------------------------------------------------------
+# Python
+# ---------------------------------------------------------------------------
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.venv/
+venv/
+env/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# ---------------------------------------------------------------------------
+# Editors and OS
+# ---------------------------------------------------------------------------
+.vscode/
+.idea/
+*.swp
+Thumbs.db
+Desktop.ini
+.DS_Store

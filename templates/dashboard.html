@@ -1,0 +1,868 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>NV Job Dashboard</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet">
+
+    <style>
+        * { font-family: 'Inter', sans-serif; }
+
+        body {
+            background: #0a0a0f;
+            color: #e2e2e8;
+        }
+
+        /* Animated background */
+        .bg-animated {
+            position: fixed;
+            inset: 0;
+            z-index: 0;
+            overflow: hidden;
+            pointer-events: none;
+        }
+
+        .orb {
+            position: absolute;
+            border-radius: 50%;
+            filter: blur(80px);
+            opacity: 0.15;
+            animation: float 12s ease-in-out infinite;
+        }
+
+        .orb-1 {
+            width: 500px; height: 500px;
+            background: #7c3aed;
+            top: -100px; left: -100px;
+            animation-delay: 0s;
+        }
+
+        .orb-2 {
+            width: 400px; height: 400px;
+            background: #4c1d95;
+            bottom: -80px; right: -80px;
+            animation-delay: 4s;
+        }
+
+        .orb-3 {
+            width: 300px; height: 300px;
+            background: #6d28d9;
+            top: 50%; left: 50%;
+            transform: translate(-50%, -50%);
+            animation-delay: 8s;
+        }
+
+        @keyframes float {
+            0%, 100% { transform: translate(0, 0) scale(1); }
+            33% { transform: translate(30px, -30px) scale(1.05); }
+            66% { transform: translate(-20px, 20px) scale(0.95); }
+        }
+
+        /* Sidebar */
+        .sidebar {
+            background: rgba(15, 10, 30, 0.95);
+            border-right: 1px solid rgba(124, 58, 237, 0.2);
+            backdrop-filter: blur(20px);
+        }
+
+        /* Cards */
+        .job-card {
+            background: rgba(20, 15, 40, 0.85);
+            border: 1px solid rgba(124, 58, 237, 0.15);
+            border-left: 4px solid rgba(124, 58, 237, 0.3);
+            backdrop-filter: blur(10px);
+            transition: all 0.25s ease;
+        }
+
+        .job-card:hover {
+            border-color: rgba(124, 58, 237, 0.5);
+            transform: translateY(-2px);
+            box-shadow: 0 8px 30px rgba(124, 58, 237, 0.15);
+        }
+
+        .job-card[data-status="applied"] { border-left-color: #60a5fa; }
+        .job-card[data-status="interviewing"] { border-left-color: #fbbf24; }
+        .job-card[data-status="rejected"] { border-left-color: #f87171; }
+
+        /* Compact mode */
+        .job-card.compact {
+            padding: 12px;
+        }
+
+        .job-card.compact .job-description,
+        .job-card.compact .status-buttons,
+        .job-card.compact .badges {
+            display: none;
+        }
+
+        .job-card.compact .action-buttons {
+            display: none;
+        }
+
+        .job-card.compact .job-header {
+            margin-bottom: 0;
+        }
+
+        /* Job card selection */
+        .job-card.selected {
+            background: rgba(124, 58, 237, 0.2);
+            border-color: rgba(124, 58, 237, 0.5);
+        }
+
+        .job-checkbox {
+            cursor: pointer;
+            margin-right: 8px;
+        }
+
+        /* Topbar */
+        .topbar {
+            background: rgba(10, 8, 20, 0.9);
+            border-bottom: 1px solid rgba(124, 58, 237, 0.15);
+            backdrop-filter: blur(20px);
+        }
+
+        /* Selects & inputs */
+        select, input[type="number"] {
+            background: rgba(255,255,255,0.05);
+            border: 1px solid rgba(124, 58, 237, 0.3);
+            color: #e2e2e8;
+            border-radius: 8px;
+            padding: 8px 12px;
+            width: 100%;
+            font-size: 0.875rem;
+            outline: none;
+            transition: border-color 0.2s;
+        }
+
+        select:focus, input[type="number"]:focus {
+            border-color: #7c3aed;
+        }
+
+        select option { background: #1a1030; color: #e2e2e8; }
+
+        /* NV Logo */
+        .nv-logo {
+            background: linear-gradient(135deg, #7c3aed, #4c1d95);
+            width: 40px; height: 40px;
+            border-radius: 10px;
+            display: flex; align-items: center; justify-content: center;
+            font-weight: 900; font-size: 1rem; color: white;
+            letter-spacing: -1px;
+            box-shadow: 0 4px 15px rgba(124, 58, 237, 0.5);
+        }
+
+        /* Score badge */
+        .score-high { background: rgba(16, 185, 129, 0.15); color: #34d399; border: 1px solid rgba(16,185,129,0.3); }
+        .score-mid  { background: rgba(245, 158, 11, 0.15); color: #fbbf24; border: 1px solid rgba(245,158,11,0.3); }
+        .score-low  { background: rgba(239, 68, 68, 0.12);  color: #f87171; border: 1px solid rgba(239,68,68,0.2); }
+
+        /* Pill badges */
+        .pill {
+            display: inline-flex; align-items: center; gap: 5px;
+            padding: 4px 10px; border-radius: 999px;
+            font-size: 0.72rem; font-weight: 600;
+        }
+
+        .pill-industry { background: rgba(124, 58, 237, 0.15); color: #a78bfa; border: 1px solid rgba(124,58,237,0.25); }
+        .pill-source   { background: rgba(59, 130, 246, 0.12); color: #60a5fa; border: 1px solid rgba(59,130,246,0.2); }
+        .pill-date     { background: rgba(255,255,255,0.05); color: #9ca3af; border: 1px solid rgba(255,255,255,0.1); }
+        .pill-salary   { background: rgba(16, 185, 129, 0.12); color: #34d399; border: 1px solid rgba(16,185,129,0.2); }
+        .pill-relisted { background: rgba(251, 146, 60, 0.15); color: #fb923c; border: 1px solid rgba(251,146,60,0.3); }
+        .pill-email    { background: rgba(234, 88, 12, 0.15); color: #fb923c; border: 1px solid rgba(234,88,12,0.3); }
+        .pill-search   { background: rgba(16, 185, 129, 0.12); color: #34d399; border: 1px solid rgba(16,185,129,0.25); }
+
+        /* Status badges */
+        .status-none      { background: rgba(107, 114, 128, 0.15); color: #9ca3af; border: 1px solid rgba(107,114,128,0.3); }
+        .status-applied   { background: rgba(59, 130, 246, 0.15); color: #60a5fa; border: 1px solid rgba(59,130,246,0.3); }
+        .status-interviewing { background: rgba(245, 158, 11, 0.15); color: #fbbf24; border: 1px solid rgba(245,158,11,0.3); }
+        .status-rejected  { background: rgba(239, 68, 68, 0.15); color: #f87171; border: 1px solid rgba(239,68,68,0.3); }
+
+        /* Modal */
+        .modal {
+            display: none;
+            position: fixed;
+            inset: 0;
+            background: rgba(0, 0, 0, 0.7);
+            z-index: 50;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .modal.active {
+            display: flex;
+        }
+
+        .modal-content {
+            background: rgba(20, 15, 40, 0.95);
+            border: 1px solid rgba(124, 58, 237, 0.3);
+            border-radius: 12px;
+            padding: 30px;
+            max-width: 600px;
+            max-height: 80vh;
+            overflow-y: auto;
+            backdrop-filter: blur(10px);
+        }
+
+        .modal-close {
+            float: right;
+            cursor: pointer;
+            font-size: 24px;
+            color: #9ca3af;
+            transition: color 0.2s;
+        }
+
+        .modal-close:hover {
+            color: #e2e2e8;
+        }
+
+        /* Apply button */
+        .apply-btn {
+            background: linear-gradient(135deg, #7c3aed, #6d28d9);
+            color: white; font-weight: 600; font-size: 0.825rem;
+            padding: 8px 18px; border-radius: 8px;
+            transition: all 0.2s; display: inline-flex; align-items: center; gap: 6px;
+            text-decoration: none;
+        }
+
+        .apply-btn:hover {
+            background: linear-gradient(135deg, #8b5cf6, #7c3aed);
+            box-shadow: 0 4px 15px rgba(124, 58, 237, 0.4);
+        }
+
+        /* Filter button */
+        .filter-btn {
+            width: 100%; background: linear-gradient(135deg, #7c3aed, #6d28d9);
+            color: white; font-weight: 700; padding: 10px; border-radius: 8px;
+            border: none; cursor: pointer; font-size: 0.875rem;
+            transition: opacity 0.2s;
+        }
+
+        .filter-btn:hover { opacity: 0.9; }
+
+        .reset-btn {
+            width: 100%; background: rgba(255,255,255,0.05);
+            color: #9ca3af; font-weight: 600; padding: 10px; border-radius: 8px;
+            border: 1px solid rgba(255,255,255,0.08); cursor: pointer;
+            font-size: 0.875rem; text-align: center; display: block;
+            text-decoration: none; transition: background 0.2s;
+        }
+
+        .reset-btn:hover { background: rgba(255,255,255,0.1); color: #e2e2e8; }
+
+        /* Quick filter buttons */
+        .quick-filter-btn {
+            background: rgba(255,255,255,0.05);
+            color: #9ca3af;
+            border: 1px solid rgba(255,255,255,0.1);
+            cursor: pointer;
+        }
+
+        .quick-filter-btn:hover {
+            background: rgba(255,255,255,0.08);
+            color: #e2e2e8;
+        }
+
+        .quick-filter-btn.active {
+            background: linear-gradient(135deg, #7c3aed, #6d28d9);
+            color: white;
+            border-color: rgba(124, 58, 237, 0.5);
+        }
+
+        /* Scrollbar */
+        ::-webkit-scrollbar { width: 5px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        ::-webkit-scrollbar-thumb { background: rgba(124, 58, 237, 0.4); border-radius: 5px; }
+    </style>
+</head>
+
+<body>
+
+    <!-- Animated background orbs -->
+    <div class="bg-animated">
+        <div class="orb orb-1"></div>
+        <div class="orb orb-2"></div>
+        <div class="orb orb-3"></div>
+    </div>
+
+    <div class="relative z-10 flex h-screen overflow-hidden">
+
+        <!-- Sidebar -->
+        <div class="sidebar hidden md:flex flex-col w-60 flex-shrink-0">
+
+            <!-- NV Logo + Title -->
+            <div class="flex items-center gap-3 px-5 py-6 border-b border-purple-900/30">
+                <div class="nv-logo">NV</div>
+                <div>
+                    <h1 class="font-bold text-white text-base leading-tight">Job Digest</h1>
+                    <p class="text-purple-400 text-xs">Daily Remote Jobs</p>
+                </div>
+            </div>
+
+            <!-- Filters -->
+            <form method="get" class="flex flex-col flex-1 px-4 py-5 gap-4 overflow-y-auto">
+
+                <div>
+                    <label class="text-purple-400 text-xs font-semibold uppercase tracking-wider mb-2 block">
+                        <i class="fa-solid fa-calendar mr-1"></i> Date
+                    </label>
+                    <select name="date">
+                        <option value="">All Dates</option>
+                        {% for d in dates %}
+                            <option value="{{ d }}" {% if d == selected_date %}selected{% endif %}>{{ d }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+
+                <div>
+                    <label class="text-purple-400 text-xs font-semibold uppercase tracking-wider mb-2 block">
+                        <i class="fa-solid fa-industry mr-1"></i> Industry
+                    </label>
+                    <select name="industry">
+                        <option value="">All Industries</option>
+                        {% for i in industries %}
+                            <option value="{{ i }}" {% if i == selected_industry %}selected{% endif %}>{{ i }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+
+                <div>
+                    <label class="text-purple-400 text-xs font-semibold uppercase tracking-wider mb-2 block">
+                        <i class="fa-solid fa-globe mr-1"></i> Source
+                    </label>
+                    <select name="source">
+                        <option value="">All Sources</option>
+                        {% for s in sources %}
+                            <option value="{{ s }}" {% if s == selected_source %}selected{% endif %}>{{ s }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+
+                <div>
+                    <label class="text-purple-400 text-xs font-semibold uppercase tracking-wider mb-2 block">
+                        <i class="fa-solid fa-inbox mr-1"></i> Found Via
+                    </label>
+                    <select name="origin">
+                        <option value="">All</option>
+                        <option value="search" {% if selected_origin == 'search' %}selected{% endif %}>API Search</option>
+                        <option value="email"  {% if selected_origin == 'email'  %}selected{% endif %}>Email Inbox</option>
+                    </select>
+                </div>
+
+                {% if inboxes %}
+                <div>
+                    <label class="text-purple-400 text-xs font-semibold uppercase tracking-wider mb-2 block">
+                        <i class="fa-solid fa-at mr-1"></i> Gmail Account
+                    </label>
+                    <select name="inbox">
+                        <option value="">All Accounts</option>
+                        {% for inbox in inboxes %}
+                        <option value="{{ inbox.username }}" {% if inbox.username == selected_inbox %}selected{% endif %}>
+                            {{ inbox.username }}
+                        </option>
+                        {% endfor %}
+                    </select>
+                </div>
+                {% endif %}
+
+                <div>
+                    <label class="text-purple-400 text-xs font-semibold uppercase tracking-wider mb-2 block">
+                        <i class="fa-solid fa-bullseye mr-1"></i> Min Match %
+                    </label>
+                    <input type="number" name="min_score" min="0" max="100" step="1" placeholder="0" value="{{ min_score }}">
+                </div>
+
+                <div class="flex flex-col gap-2 mt-2">
+                    <button type="submit" class="filter-btn">
+                        <i class="fa-solid fa-filter mr-1"></i> Apply Filters
+                    </button>
+                    <a href="/" class="reset-btn">
+                        <i class="fa-solid fa-rotate-left mr-1"></i> Reset
+                    </a>
+                </div>
+
+                <!-- Active indicator -->
+                <div class="mt-auto pt-4 border-t border-purple-900/30">
+                    <div class="flex items-center gap-2 text-xs text-gray-500">
+                        <span class="w-2 h-2 bg-green-400 rounded-full animate-pulse"></span>
+                        System running
+                    </div>
+                </div>
+            </form>
+        </div>
+
+        <!-- Main -->
+        <div class="flex-1 flex flex-col overflow-hidden">
+
+            <!-- Top bar -->
+            <div class="topbar px-6 py-4 flex-shrink-0">
+                <div class="flex items-center justify-between mb-4">
+                    <div>
+                        <h2 class="text-white font-bold text-lg">
+                            Remote Jobs
+                            {% if selected_industry %}<span class="text-purple-400"> — {{ selected_industry }}</span>{% endif %}
+                            {% if selected_date %}<span class="text-gray-500 font-normal text-base"> · {{ selected_date }}</span>{% endif %}
+                        </h2>
+                        <div class="flex items-center gap-6 mt-2">
+                            <p class="text-gray-500 text-sm">
+                                {{ total_jobs }} job{{ 's' if total_jobs != 1 else '' }} found
+                                <span class="text-green-400">({{ cover_letter_count }} with cover letter{{ 's' if cover_letter_count != 1 else '' }})</span>
+                            </p>
+                            <div class="text-gray-500 text-xs flex gap-4">
+                                {% if status_counts.applied > 0 %}
+                                <span><i class="fa-solid fa-check-circle text-blue-400 mr-1"></i>Applied: {{ status_counts.applied }}</span>
+                                {% endif %}
+                                {% if status_counts.interviewing > 0 %}
+                                <span><i class="fa-solid fa-comments text-yellow-400 mr-1"></i>Interviewing: {{ status_counts.interviewing }}</span>
+                                {% endif %}
+                                {% if status_counts.rejected > 0 %}
+                                <span><i class="fa-solid fa-times-circle text-red-400 mr-1"></i>Rejected: {{ status_counts.rejected }}</span>
+                                {% endif %}
+                            </div>
+                            {% if last_sync %}
+                            <p class="text-gray-600 text-xs ml-auto">
+                                <i class="fa-solid fa-sync-alt mr-1"></i>Updated: {{ last_sync[:10] }} {{ last_sync[11:16] }}
+                            </p>
+                            {% endif %}
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Quick filters and search -->
+                <div class="flex gap-1.5 flex-wrap items-center">
+                    <button onclick="filterByStatus('all')" class="quick-filter-btn active px-2 py-1 rounded text-xs font-semibold transition" data-status="all">
+                        All
+                    </button>
+                    <button onclick="filterByOrigin('search')" class="quick-filter-btn px-2 py-1 rounded text-xs font-semibold transition" data-origin="search">
+                        <i class="fa-solid fa-magnifying-glass mr-0.5"></i>API
+                    </button>
+                    <button onclick="filterByOrigin('email')" class="quick-filter-btn px-2 py-1 rounded text-xs font-semibold transition" data-origin="email">
+                        <i class="fa-solid fa-envelope mr-0.5"></i>Email
+                    </button>
+                    <span class="text-gray-700 text-xs">|</span>
+                    <button onclick="filterByStatus('with-cover')" class="quick-filter-btn px-2 py-1 rounded text-xs font-semibold transition" data-status="with-cover">
+                        <i class="fa-solid fa-check mr-0.5"></i>Letters
+                    </button>
+                    <button onclick="filterByStatus('pending')" class="quick-filter-btn px-2 py-1 rounded text-xs font-semibold transition" data-status="pending">
+                        Pending
+                    </button>
+
+                    <!-- Sort dropdown -->
+                    <select id="sortSelect" onchange="changeSortOrder(this.value)" class="px-2 py-1 rounded text-xs bg-purple-900/30 border border-purple-700/50 text-gray-300 focus:border-purple-500 focus:outline-none">
+                        <option value="score" {% if sort_by == 'score' %}selected{% endif %}>Match %</option>
+                        <option value="date" {% if sort_by == 'date' %}selected{% endif %}>Date</option>
+                        <option value="salary" {% if sort_by == 'salary' %}selected{% endif %}>Salary</option>
+                    </select>
+
+                    <input type="text" id="searchBox" placeholder="Search..." class="px-2 py-1 rounded text-xs bg-purple-900/30 border border-purple-700/50 text-gray-300 placeholder-gray-600 focus:border-purple-500 focus:outline-none ml-auto">
+
+                    <!-- Expand/Collapse toggle -->
+                    <button onclick="toggleCompactMode()" id="expandToggle" class="px-2 py-1 rounded text-xs bg-purple-900/30 border border-purple-700/50 text-gray-300 hover:text-gray-100 transition">
+                        <i class="fa-solid fa-compress"></i>
+                    </button>
+
+                    <!-- Export CSV -->
+                    <a href="/api/export-csv" class="px-2 py-1 rounded text-xs bg-green-900/30 border border-green-700/50 text-green-300 hover:bg-green-900/50 transition" title="Export all jobs to CSV">
+                        <i class="fa-solid fa-file-csv mr-1"></i>CSV
+                    </a>
+
+                    <!-- Bulk action button -->
+                    <button onclick="generateBulkCoverLetters()" id="bulkGenerateBtn" class="px-2 py-1 rounded text-xs bg-green-900/30 border border-green-700/50 text-green-300 hover:bg-green-900/50 transition hidden">
+                        <i class="fa-solid fa-envelope mr-0.5"></i>(<span id="selectedCount">0</span>)
+                    </button>
+                </div>
+
+                <!-- Active Filters Display -->
+                {% if selected_source or selected_date or selected_industry or min_score > 0 %}
+                <div class="flex gap-2 flex-wrap items-center mt-3">
+                    <span class="text-gray-500 text-xs">Active filters:</span>
+                    {% if selected_source %}
+                    <span class="px-2 py-1 rounded-lg text-xs bg-purple-900/40 text-purple-300 border border-purple-700/50 flex items-center gap-2">
+                        {{ selected_source }}
+                        <a href="/?date={{ selected_date }}&industry={{ selected_industry }}&min_score={{ min_score }}" class="hover:text-purple-100" title="Remove">✕</a>
+                    </span>
+                    {% endif %}
+                    {% if selected_date %}
+                    <span class="px-2 py-1 rounded-lg text-xs bg-purple-900/40 text-purple-300 border border-purple-700/50 flex items-center gap-2">
+                        {{ selected_date }}
+                        <a href="/?source={{ selected_source }}&industry={{ selected_industry }}&min_score={{ min_score }}" class="hover:text-purple-100" title="Remove">✕</a>
+                    </span>
+                    {% endif %}
+                    {% if selected_industry %}
+                    <span class="px-2 py-1 rounded-lg text-xs bg-purple-900/40 text-purple-300 border border-purple-700/50 flex items-center gap-2">
+                        {{ selected_industry }}
+                        <a href="/?source={{ selected_source }}&date={{ selected_date }}&min_score={{ min_score }}" class="hover:text-purple-100" title="Remove">✕</a>
+                    </span>
+                    {% endif %}
+                    {% if min_score > 0 %}
+                    <span class="px-2 py-1 rounded-lg text-xs bg-purple-900/40 text-purple-300 border border-purple-700/50 flex items-center gap-2">
+                        Min: {{ min_score }}%
+                        <a href="/?source={{ selected_source }}&date={{ selected_date }}&industry={{ selected_industry }}" class="hover:text-purple-100" title="Remove">✕</a>
+                    </span>
+                    {% endif %}
+                    <a href="/" class="px-3 py-1 rounded-lg text-xs bg-red-900/30 text-red-300 border border-red-700/50 hover:bg-red-900/50 transition">
+                        Clear All
+                    </a>
+                </div>
+                {% endif %}
+            </div>
+
+            <!-- Job list -->
+            <div class="flex-1 overflow-y-auto px-6 py-5">
+                {% if jobs %}
+                    <div class="flex flex-col gap-4">
+                        {% for job in jobs %}
+                        <div class="job-card rounded-xl p-5" {% if job.has_cover_letter %}data-has-cover="true"{% endif %} data-status="{{ job.apply_status }}" data-origin="{{ job.origin }}">
+
+                            <!-- Header -->
+                            <div class="job-header flex items-start justify-between gap-2 mb-3">
+                                <input type="checkbox" class="job-checkbox mt-1" data-job-id="{{ job.id }}" onchange="updateBulkSelection()">
+                                <div class="flex-1">
+                                    <div class="flex items-center gap-2 flex-wrap">
+                                        <h3 class="text-white font-bold text-base leading-tight">{{ job.title }}</h3>
+                                        {% if job.has_cover_letter %}
+                                        <span class="px-2 py-0.5 rounded text-xs font-bold bg-green-900/40 text-green-300 border border-green-700/50">
+                                            <i class="fa-solid fa-check mr-1"></i>Cover Letter
+                                        </span>
+                                        {% endif %}
+                                        {% if job.relisted %}
+                                        <span class="pill pill-relisted" title="This job has been re-listed {{ job.seen_count }} times">
+                                            <i class="fa-solid fa-rotate"></i> Re-listed
+                                            {% if job.seen_count > 2 %}&times;{{ job.seen_count }}{% endif %}
+                                        </span>
+                                        {% endif %}
+                                    </div>
+                                    <p class="text-purple-400 text-sm font-medium mt-0.5">{{ job.company }}</p>
+                                </div>
+                                <div class="px-3 py-1.5 rounded-lg text-xs font-bold flex-shrink-0
+                                    {% if job.score >= 7 %}score-high{% elif job.score >= 4 %}score-mid{% else %}score-low{% endif %}">
+                                    {{ job.score }}% match
+                                </div>
+                            </div>
+
+                            <!-- Badges -->
+                            <div class="badges flex flex-wrap gap-2 mb-3">
+                                <span class="pill pill-industry"><i class="fa-solid fa-industry"></i> {{ job.industry }}</span>
+                                {% if job.origin == 'email' %}
+                                <span class="pill pill-email"><i class="fa-solid fa-envelope"></i> Email</span>
+                                {% else %}
+                                <span class="pill pill-search"><i class="fa-solid fa-magnifying-glass"></i> API Search</span>
+                                {% endif %}
+                                <span class="pill pill-source"><i class="fa-solid fa-globe"></i> {{ job.source }}</span>
+                                <span class="pill pill-date"><i class="fa-solid fa-calendar"></i> {{ job.date }}
+                                    {% if job.days_old is defined %}
+                                    <span class="text-gray-500 text-xs">({{ job.days_old }} day{{ 's' if job.days_old != 1 else '' }} old)</span>
+                                    {% endif %}
+                                </span>
+                                {% if job.salary %}
+                                <span class="pill pill-salary"><i class="fa-solid fa-dollar-sign"></i> {{ job.salary }}</span>
+                                {% endif %}
+                            </div>
+
+                            <!-- Description -->
+                            {% if job.description %}
+                            <p class="job-description text-gray-400 text-sm leading-relaxed mb-4">{{ job.description }}</p>
+                            {% endif %}
+
+                            <!-- Application Status Buttons -->
+                            <div class="status-buttons flex flex-wrap gap-2 mb-4">
+                                <button onclick="updateStatus({{ job.id }}, 'none')" class="status-btn px-3 py-1.5 rounded-lg text-xs font-semibold transition {% if job.apply_status == 'none' %}status-none active{% else %}bg-gray-800 text-gray-500{% endif %}" data-job-id="{{ job.id }}" data-status="none">
+                                    <i class="fa-solid fa-circle-minus mr-1"></i>None
+                                </button>
+                                <button onclick="updateStatus({{ job.id }}, 'applied')" class="status-btn px-3 py-1.5 rounded-lg text-xs font-semibold transition {% if job.apply_status == 'applied' %}status-applied active{% else %}bg-gray-800 text-gray-500{% endif %}" data-job-id="{{ job.id }}" data-status="applied">
+                                    <i class="fa-solid fa-check-circle mr-1"></i>Applied
+                                </button>
+                                <button onclick="updateStatus({{ job.id }}, 'interviewing')" class="status-btn px-3 py-1.5 rounded-lg text-xs font-semibold transition {% if job.apply_status == 'interviewing' %}status-interviewing active{% else %}bg-gray-800 text-gray-500{% endif %}" data-job-id="{{ job.id }}" data-status="interviewing">
+                                    <i class="fa-solid fa-comments mr-1"></i>Interviewing
+                                </button>
+                                <button onclick="updateStatus({{ job.id }}, 'rejected')" class="status-btn px-3 py-1.5 rounded-lg text-xs font-semibold transition {% if job.apply_status == 'rejected' %}status-rejected active{% else %}bg-gray-800 text-gray-500{% endif %}" data-job-id="{{ job.id }}" data-status="rejected">
+                                    <i class="fa-solid fa-times-circle mr-1"></i>Rejected
+                                </button>
+                            </div>
+
+                            <!-- Action Buttons -->
+                            <div class="action-buttons flex flex-wrap gap-2">
+                                {% if job.link %}
+                                <a href="{{ job.link }}" target="_blank" class="apply-btn">
+                                    Apply Now <i class="fa-solid fa-arrow-right text-xs"></i>
+                                </a>
+                                {% endif %}
+                                {% if job.gmail_url %}
+                                <a href="{{ job.gmail_url }}" target="_blank" class="apply-btn" style="background: linear-gradient(135deg, #b45309, #d97706);" title="Open original application email in Gmail">
+                                    <i class="fa-solid fa-envelope"></i> View Email
+                                </a>
+                                {% endif %}
+                                <button onclick="openModal(this)" class="apply-btn" style="background: linear-gradient(135deg, #4c1d95, #6d28d9);"
+                                    data-title="{{ job.title | e }}"
+                                    data-company="{{ job.company | e }}"
+                                    data-description="{{ job.description | e }}">
+                                    <i class="fa-solid fa-expand"></i> View Full
+                                </button>
+                                <button onclick="copyToClipboard('{{ job.link }}')" class="apply-btn" style="background: linear-gradient(135deg, #5b21b6, #7c3aed);">
+                                    <i class="fa-solid fa-copy"></i> Copy Link
+                                </button>
+                                <button onclick="showSimilar({{ job.id }}, '{{ job.title | e }}')" class="apply-btn" style="background: linear-gradient(135deg, #1e3a5f, #1d4ed8);" title="Find similar jobs">
+                                    <i class="fa-solid fa-layer-group"></i> Similar
+                                </button>
+                                <button onclick="deleteJob({{ job.id }}, this)" class="apply-btn" style="background: linear-gradient(135deg, #7f1d1d, #991b1b);" title="Remove dead/irrelevant listing">
+                                    <i class="fa-solid fa-trash"></i>
+                                </button>
+                            </div>
+                        </div>
+                        {% endfor %}
+                    </div>
+
+                {% else %}
+                    <div class="flex flex-col items-center justify-center h-full text-center py-32">
+                        <div class="w-16 h-16 rounded-full bg-purple-900/30 flex items-center justify-center mb-4">
+                            <i class="fa-solid fa-magnifying-glass text-purple-400 text-2xl"></i>
+                        </div>
+                        <h3 class="text-white font-bold text-lg mb-2">No jobs found</h3>
+                        <p class="text-gray-500 text-sm mb-6">Try adjusting your filters or run the job search</p>
+                        <a href="/" class="apply-btn">
+                            <i class="fa-solid fa-rotate-left"></i> Reset Filters
+                        </a>
+                    </div>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+
+    <!-- Similar Jobs Modal -->
+    <div id="similarModal" class="modal">
+        <div class="modal-content" style="min-width: 480px;">
+            <span class="modal-close" onclick="closeSimilar()">&times;</span>
+            <h3 class="text-white font-bold text-lg mb-1">Similar Jobs</h3>
+            <p id="similarSubtitle" class="text-purple-400 text-sm mb-4"></p>
+            <div id="similarList" class="flex flex-col gap-2"></div>
+        </div>
+    </div>
+
+    <!-- Job Details Modal -->
+    <div id="jobModal" class="modal">
+        <div class="modal-content">
+            <span class="modal-close" onclick="closeModal()">&times;</span>
+            <h3 id="modalTitle" class="text-white font-bold text-xl mb-2"></h3>
+            <p id="modalCompany" class="text-purple-400 text-sm font-medium mb-4"></p>
+            <div id="modalDescription" class="text-gray-300 text-sm leading-relaxed whitespace-pre-wrap"></div>
+        </div>
+    </div>
+
+    <script>
+        function filterByOrigin(origin) {
+            const jobs = document.querySelectorAll('.job-card');
+            jobs.forEach(job => {
+                job.style.display = (job.dataset.origin === origin) ? 'block' : 'none';
+            });
+            document.querySelectorAll('.quick-filter-btn').forEach(btn => btn.classList.remove('active'));
+            event.target.classList.add('active');
+            document.querySelector('.flex-1.overflow-y-auto').scrollTop = 0;
+        }
+
+        function filterByStatus(status) {
+            const jobs = document.querySelectorAll('.job-card');
+            jobs.forEach(job => {
+                if (status === 'all') {
+                    job.style.display = 'block';
+                } else if (status === 'with-cover') {
+                    job.style.display = job.hasAttribute('data-has-cover') ? 'block' : 'none';
+                } else if (status === 'pending') {
+                    job.style.display = job.hasAttribute('data-has-cover') ? 'none' : 'block';
+                }
+            });
+
+            // Update active button
+            document.querySelectorAll('.quick-filter-btn').forEach(btn => {
+                btn.classList.remove('active');
+            });
+            event.target.classList.add('active');
+
+            // Auto-scroll to top
+            document.querySelector('.flex-1.overflow-y-auto').scrollTop = 0;
+        }
+
+        function changeSortOrder(value) {
+            const params = new URLSearchParams(window.location.search);
+            params.set('sort', value);
+            window.location.search = params.toString();
+        }
+
+        function toggleCompactMode() {
+            const cards = document.querySelectorAll('.job-card');
+            const toggle = document.getElementById('expandToggle');
+            const isCompact = cards[0]?.classList.contains('compact');
+
+            cards.forEach(card => {
+                card.classList.toggle('compact');
+            });
+
+            if (isCompact) {
+                toggle.innerHTML = '<i class="fa-solid fa-compress"></i>';
+            } else {
+                toggle.innerHTML = '<i class="fa-solid fa-expand"></i>';
+            }
+        }
+
+        function updateBulkSelection() {
+            const checkboxes = document.querySelectorAll('.job-checkbox:checked');
+            const bulkBtn = document.getElementById('bulkGenerateBtn');
+            const countSpan = document.getElementById('selectedCount');
+
+            countSpan.textContent = checkboxes.length;
+
+            if (checkboxes.length > 0) {
+                bulkBtn.classList.remove('hidden');
+            } else {
+                bulkBtn.classList.add('hidden');
+            }
+
+            // Highlight selected cards
+            document.querySelectorAll('.job-card').forEach(card => {
+                const checkbox = card.querySelector('.job-checkbox');
+                if (checkbox.checked) {
+                    card.classList.add('selected');
+                } else {
+                    card.classList.remove('selected');
+                }
+            });
+        }
+
+        function generateBulkCoverLetters() {
+            const checkboxes = document.querySelectorAll('.job-checkbox:checked');
+            const jobIds = Array.from(checkboxes).map(cb => cb.dataset.jobId);
+
+            if (jobIds.length === 0) {
+                alert('No jobs selected');
+                return;
+            }
+
+            alert(`Generate cover letters for ${jobIds.length} job(s)? (Feature coming soon - would trigger bulk generation)`);
+            // TODO: Implement bulk generation endpoint
+        }
+
+        document.getElementById('searchBox').addEventListener('keyup', (e) => {
+            const query = e.target.value.toLowerCase();
+            const jobs = document.querySelectorAll('.job-card');
+            jobs.forEach(job => {
+                const title = job.querySelector('h3').textContent.toLowerCase();
+                const company = job.querySelector('p.text-purple-400').textContent.toLowerCase();
+                job.style.display = (title.includes(query) || company.includes(query)) ? 'block' : 'none';
+            });
+        });
+
+        function openModal(btn) {
+            document.getElementById('modalTitle').textContent = btn.dataset.title;
+            document.getElementById('modalCompany').textContent = btn.dataset.company;
+            document.getElementById('modalDescription').textContent = btn.dataset.description;
+            document.getElementById('jobModal').classList.add('active');
+        }
+
+        function closeModal() {
+            document.getElementById('jobModal').classList.remove('active');
+        }
+
+        function updateStatus(jobId, status) {
+            fetch('/api/job-status', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    job_id: jobId,
+                    status: status
+                })
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    // Update button styling
+                    const statusBtns = document.querySelectorAll(`[data-job-id="${jobId}"]`);
+                    statusBtns.forEach(btn => {
+                        btn.classList.remove('status-none', 'status-applied', 'status-interviewing', 'status-rejected', 'active', 'bg-gray-800', 'text-gray-500');
+                        if (btn.dataset.status === status) {
+                            btn.classList.add(`status-${status}`, 'active');
+                        } else {
+                            btn.classList.add('bg-gray-800', 'text-gray-500');
+                        }
+                    });
+                }
+            })
+            .catch(error => console.error('Error updating status:', error));
+        }
+
+        function showSimilar(jobId, title) {
+            document.getElementById('similarSubtitle').textContent = title;
+            document.getElementById('similarList').innerHTML = '<p class="text-gray-500 text-sm">Loading...</p>';
+            document.getElementById('similarModal').classList.add('active');
+
+            fetch(`/api/similar-jobs/${jobId}`)
+                .then(r => r.json())
+                .then(jobs => {
+                    const list = document.getElementById('similarList');
+                    if (!jobs.length) {
+                        list.innerHTML = '<p class="text-gray-500 text-sm">No similar jobs found.</p>';
+                        return;
+                    }
+                    list.innerHTML = jobs.map(j => `
+                        <div class="flex items-start justify-between gap-3 p-3 rounded-lg bg-purple-900/20 border border-purple-800/30">
+                            <div class="flex-1 min-w-0">
+                                <p class="text-white text-sm font-semibold truncate">${j.title}</p>
+                                <p class="text-purple-400 text-xs">${j.company}</p>
+                                <p class="text-gray-500 text-xs mt-0.5">📄 ${j.cv || '—'}</p>
+                            </div>
+                            <div class="flex items-center gap-2 flex-shrink-0">
+                                <span class="text-xs font-bold px-2 py-1 rounded ${j.score >= 7 ? 'score-high' : j.score >= 4 ? 'score-mid' : 'score-low'}">${j.score}%</span>
+                                ${j.link ? `<a href="${j.link}" target="_blank" class="text-xs text-purple-400 hover:text-purple-200"><i class="fa-solid fa-arrow-up-right-from-square"></i></a>` : ''}
+                            </div>
+                        </div>
+                    `).join('');
+                })
+                .catch(() => {
+                    document.getElementById('similarList').innerHTML = '<p class="text-red-400 text-sm">Error loading similar jobs.</p>';
+                });
+        }
+
+        function closeSimilar() {
+            document.getElementById('similarModal').classList.remove('active');
+        }
+
+        document.getElementById('similarModal').addEventListener('click', e => {
+            if (e.target.id === 'similarModal') closeSimilar();
+        });
+
+        function deleteJob(jobId, btn) {
+            if (!confirm('Remove this job listing?')) return;
+            fetch('/api/job-delete', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ job_id: jobId })
+            })
+            .then(r => r.json())
+            .then(data => {
+                if (data.success) {
+                    btn.closest('.job-card').remove();
+                }
+            })
+            .catch(e => console.error('Delete failed:', e));
+        }
+
+        function copyToClipboard(text) {
+            if (!text) return;
+            navigator.clipboard.writeText(text).then(() => {
+                alert('Job link copied to clipboard!');
+            }).catch(() => {
+                alert('Failed to copy link');
+            });
+        }
+
+        // Close modal when clicking outside
+        document.getElementById('jobModal').addEventListener('click', (e) => {
+            if (e.target.id === 'jobModal') {
+                closeModal();
+            }
+        });
+    </script>
+</body>
+</html>

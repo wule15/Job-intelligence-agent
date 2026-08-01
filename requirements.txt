@@ -1,0 +1,21 @@
+# Configuration
+python-dotenv==1.0.0
+
+# HTTP and HTML parsing. Every connector uses these.
+requests==2.31.0
+beautifulsoup4==4.12.0
+
+# Job board clients
+ddgs==9.13.0
+apify-client>=1.7.0
+selenium==4.15.0
+
+# CV parsing, feeds the skill extractor
+pdfplumber==0.10.0
+
+# Cover letter generation
+anthropic>=0.89.0
+python-docx==1.2.0
+
+# Local review dashboard
+Flask==3.1.3
