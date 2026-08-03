@@ -12,7 +12,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from job_filter import JobFilter  # noqa: E402
+from core.job_filter import JobFilter  # noqa: E402
 
 
 # A small skills profile standing in for the extracted CV cache.

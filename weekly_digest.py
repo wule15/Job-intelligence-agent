@@ -10,8 +10,8 @@ Add to run_job_search.bat or Task Scheduler:
 import sqlite3
 import requests
 from datetime import datetime, timedelta
-from config import Config
-from utils import format_cv_label
+from core.config import Config
+from core.utils import format_cv_label
 
 
 def get_weekly_stats():

@@ -8,8 +8,8 @@ Integrate multiple job board connectors:
 """
 
 import requests
-from config import Config
-from utils import setup_logging
+from core.config import Config
+from core.utils import setup_logging
 
 logger = setup_logging('job_connectors')
 

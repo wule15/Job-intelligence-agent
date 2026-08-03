@@ -11,7 +11,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from job_filter import (  # noqa: E402
+from core.job_filter import (  # noqa: E402
     is_geo_restricted,
     is_non_english_title,
     TITLE_BOOST_MULTIPLIER,

@@ -16,14 +16,13 @@ from job_search_ddg import DDGJobSearcher
 from job_search_apify import ApifyJobSearcher
 from job_search_linkedin import LinkedInJobSearcher
 from job_search_ats import ATSJobSearcher, enrich_descriptions
-from job_filter import JobFilter, title_prescreen
-from job_validator import JobValidator
-from job_normalize import canonical_url, dedup_key, find_near_duplicates
-from database import Database
-from config import Config
-from utils import setup_logging
-import source_health
-
+from core.job_filter import JobFilter, title_prescreen
+from core.job_validator import JobValidator
+from core.job_normalize import canonical_url, dedup_key, find_near_duplicates
+from core.database import Database
+from core.config import Config
+from core.utils import setup_logging
+from core import source_health
 logger = setup_logging('job_search_smart')
 
 # Minimum relevance score a job needs to reach the digest. At the capped
@@ -64,7 +63,7 @@ class SmartJobSearcher:
 
         if needs_refresh:
             try:
-                from keyword_extractor import KeywordExtractor
+                from core.keyword_extractor import KeywordExtractor
                 print("[*] Skills cache missing or stale — re-extracting from CVs...")
                 extractor = KeywordExtractor()
                 extractor.extract_all_cvs()

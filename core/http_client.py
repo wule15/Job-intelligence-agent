@@ -25,8 +25,8 @@ import requests
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
-from config import Config
-from utils import setup_logging
+from core.config import Config
+from core.utils import setup_logging
 
 logger = setup_logging('http_client')
 

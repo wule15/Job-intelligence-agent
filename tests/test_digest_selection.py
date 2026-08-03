@@ -14,7 +14,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import telegram_sender  # noqa: E402
-from database import Database  # noqa: E402
+from core.database import Database  # noqa: E402
 
 
 @pytest.fixture
@@ -123,26 +123,26 @@ class TestTitlePrescreen:
     SKILLS = {'valve sizing', 'kv calculation', 'atex', 'technical writing'}
 
     def test_target_role_passes(self):
-        from job_filter import title_prescreen
+        from core.job_filter import title_prescreen
         assert title_prescreen('Sales Engineer', self.SKILLS)
 
     def test_sector_keyword_passes(self):
-        from job_filter import title_prescreen
+        from core.job_filter import title_prescreen
         assert title_prescreen('Industrial Automation Lead', self.SKILLS)
 
     def test_cv_skill_in_title_passes(self):
-        from job_filter import title_prescreen
+        from core.job_filter import title_prescreen
         assert title_prescreen('ATEX Compliance Officer', self.SKILLS)
 
     def test_unrelated_title_is_screened_out(self):
-        from job_filter import title_prescreen
+        from core.job_filter import title_prescreen
         assert not title_prescreen('Pastry Chef', self.SKILLS)
 
     def test_empty_title_is_screened_out(self):
-        from job_filter import title_prescreen
+        from core.job_filter import title_prescreen
         assert not title_prescreen('', self.SKILLS)
 
     def test_short_tokens_do_not_match_everything(self):
         """A two-letter skill token must not pass every title."""
-        from job_filter import title_prescreen
+        from core.job_filter import title_prescreen
         assert not title_prescreen('Pastry Chef', {'ai', 'qa'})

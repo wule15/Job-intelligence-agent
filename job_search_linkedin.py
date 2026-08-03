@@ -20,9 +20,9 @@ from urllib.parse import urlencode
 
 from bs4 import BeautifulSoup
 
-from http_client import build_session
-from job_normalize import canonical_url
-from utils import setup_logging
+from core.http_client import build_session
+from core.job_normalize import canonical_url
+from core.utils import setup_logging
 
 logger = setup_logging('job_search_linkedin')
 

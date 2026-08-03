@@ -18,7 +18,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from job_validator import JobValidator  # noqa: E402
+from core.job_validator import JobValidator  # noqa: E402
 
 
 # A live page. Nothing about it says the listing is gone, but it contains

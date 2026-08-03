@@ -9,7 +9,7 @@ import sys
 
 import requests
 
-from config import Config
+from core.config import Config
 
 
 def main():

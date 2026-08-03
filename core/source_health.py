@@ -15,7 +15,7 @@ import time
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 
-from config import Config
+from core.config import Config
 
 # A source returning nothing this many runs in a row is reported as stale.
 #

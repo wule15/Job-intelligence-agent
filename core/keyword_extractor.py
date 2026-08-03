@@ -6,8 +6,8 @@ Extracts skills, experience, and other relevant information for job matching.
 import json
 from pathlib import Path
 from anthropic import Anthropic
-from config import Config
-from utils import setup_logging
+from core.config import Config
+from core.utils import setup_logging
 import pdfplumber
 
 logger = setup_logging('keyword_extractor')

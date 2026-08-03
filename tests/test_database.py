@@ -12,7 +12,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from database import Database  # noqa: E402
+from core.database import Database  # noqa: E402
 
 
 @pytest.fixture

@@ -30,8 +30,8 @@ import re
 import sqlite3
 from email.header import decode_header as _decode_header
 from datetime import datetime, timedelta
-from config import Config
-from utils import setup_logging
+from core.config import Config
+from core.utils import setup_logging
 
 logger = setup_logging('gmail_application_tracker')
 
@@ -42,7 +42,7 @@ def _get_scorer():
     global _scorer
     if _scorer is None:
         try:
-            from job_filter import JobFilter
+            from core.job_filter import JobFilter
             _scorer = JobFilter()
         except Exception as e:
             logger.warning(f"[Tracker] Could not load JobFilter: {e}")

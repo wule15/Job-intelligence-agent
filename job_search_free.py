@@ -17,7 +17,7 @@ import xml.etree.ElementTree as ET
 import requests
 import time
 from datetime import datetime
-from utils import setup_logging
+from core.utils import setup_logging
 
 logger = setup_logging('job_search_free')
 

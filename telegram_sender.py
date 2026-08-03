@@ -7,9 +7,9 @@ from datetime import datetime
 
 import requests
 
-from config import Config
-from job_filter import ALWAYS_INCLUDE_SOURCES
-from utils import format_cv_label
+from core.config import Config
+from core.job_filter import ALWAYS_INCLUDE_SOURCES
+from core.utils import format_cv_label
 
 # ── Digest composition ───────────────────────────────────────────────────────
 # Slots are a ceiling, not a floor. A job only occupies one if it clears

@@ -6,9 +6,9 @@ Ranks jobs by how well they match your CV skills.
 import json
 import re
 from pathlib import Path
-from config import Config
-from utils import setup_logging
-from synonym_map import skill_matches
+from core.config import Config
+from core.utils import setup_logging
+from core.synonym_map import skill_matches
 
 logger = setup_logging('job_filter')
 

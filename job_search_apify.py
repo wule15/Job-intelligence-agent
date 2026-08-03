@@ -14,7 +14,7 @@ Free tier: ~$5 compute units/month. LinkedIn search ~0.25 CU per run.
 import os
 import time
 from datetime import datetime
-from utils import setup_logging
+from core.utils import setup_logging
 
 logger = setup_logging('job_search_apify')
 

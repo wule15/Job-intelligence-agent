@@ -14,8 +14,8 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-import config  # noqa: E402
-from http_client import (  # noqa: E402
+from core import config  # noqa: E402
+from core.http_client import (  # noqa: E402
     RETRY_METHODS,
     RETRY_STATUSES,
     build_retry,
@@ -100,7 +100,7 @@ class TestConnectorsUseIt:
     """The policy is worthless if the connectors bypass it."""
 
     def test_validator_session_retries(self):
-        from job_validator import JobValidator
+        from core.job_validator import JobValidator
         adapter = JobValidator().session.get_adapter('https://example.com')
         assert adapter.max_retries.total == config.Config.RETRY_ATTEMPTS
 

@@ -6,7 +6,7 @@ import logging
 import logging.handlers
 import re
 from pathlib import Path
-from config import Config
+from core.config import Config
 
 def setup_logging(name=__name__, log_file=None):
     """Setup rotating file logger."""

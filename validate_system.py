@@ -6,9 +6,9 @@ Tests: job search → cover letter generation → output files.
 import sys
 from pathlib import Path
 from job_search_smart import SmartJobSearcher
-from cover_letter_generator import CoverLetterGenerator
-from config import Config
-from utils import setup_logging
+from core.cover_letter_generator import CoverLetterGenerator
+from core.config import Config
+from core.utils import setup_logging
 
 logger = setup_logging('validate_system')
 

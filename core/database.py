@@ -7,8 +7,8 @@ import sqlite3
 import json
 from datetime import datetime, timedelta
 from pathlib import Path
-from config import Config
-from job_normalize import dedup_key
+from core.config import Config
+from core.job_normalize import dedup_key
 
 class Database:
     """Database operations for job search and cover letter system."""

@@ -11,7 +11,7 @@ LinkedIn RSS URL format:
 import requests
 import xml.etree.ElementTree as ET
 import re
-from utils import setup_logging
+from core.utils import setup_logging
 from datetime import datetime
 
 logger = setup_logging('job_search_linkedin_rss')

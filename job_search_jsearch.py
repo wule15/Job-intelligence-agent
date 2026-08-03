@@ -5,10 +5,10 @@ Searches real jobs from LinkedIn, Indeed, Glassdoor, etc.
 
 import requests
 from datetime import datetime
-from config import Config
-from database import Database
-from job_filter import JobFilter
-from utils import setup_logging
+from core.config import Config
+from core.database import Database
+from core.job_filter import JobFilter
+from core.utils import setup_logging
 import os
 
 logger = setup_logging('job_search_jsearch')
