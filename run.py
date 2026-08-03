@@ -1,6 +1,10 @@
 """
-Main orchestrator for the job search + cover letter system.
-Runs end-to-end: search jobs → filter → generate cover letters.
+Interactive path: search, then draft cover letters for the top few matches.
+
+This is not the scheduled pipeline and it does not deliver anything. The
+daily run is job_search_smart.py to search and store, then telegram_sender.py
+to compose and send the digest. Use this script by hand when you want DOCX
+cover letters written for the best current matches.
 """
 
 import sys
