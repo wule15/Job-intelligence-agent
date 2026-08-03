@@ -187,7 +187,7 @@ Python 3.11 or newer, no framework.
 | Tests | pytest |
 | Normalisation | standard library only, `re` and `urllib.parse` |
 
-165 tests, covering scoring, filtering, deduplication, storage, source health, digest composition, retry policy and two regressions that each cost real results. Every test runs against fixtures and temporary files. No test touches a real database or makes a network call.
+168 tests, covering scoring, filtering, deduplication, storage, source health, digest composition, retry policy and three regressions that each cost real results. Every test runs against fixtures and temporary files. No test touches a real database or makes a network call.
 
 One connector has tests. The other nine do not. Each makes a live network call, and mocking ten third-party APIs is a larger job than this project justifies, so the ones that exist assert on what a connector would send rather than on what comes back.
 
@@ -247,7 +247,7 @@ Put them in `resumes/` as PDFs. Skills are extracted from them on first run and 
 
 ```bash
 python validate_system.py     # configuration and connectivity
-pytest                        # 165 tests, no network
+pytest                        # 168 tests, no network
 python job_search_smart.py    # one real run
 ```
 
