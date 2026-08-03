@@ -73,3 +73,13 @@ htmlcov/
 Thumbs.db
 Desktop.ini
 .DS_Store
+
+# ---------------------------------------------------------------------------
+# Local only. Scripts kept for personal convenience that are deliberately
+# not part of the published project, including browser automation that
+# would contradict what the README says this tool does.
+# ---------------------------------------------------------------------------
+local/
+backup/
+old/
+archive/
