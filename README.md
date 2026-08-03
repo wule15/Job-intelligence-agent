@@ -263,7 +263,21 @@ There is no scheduler inside the application. Use whatever your operating system
 
 On Windows, use Task Scheduler pointed at the same two commands.
 
-**7. Optional dashboard.**
+Those two commands are the whole scheduled pipeline. `job_search_smart.py`
+searches every source, deduplicates, scores and stores. `telegram_sender.py`
+composes the digest from what is stored and sends it.
+
+**7. Optional, cover letters by hand.**
+
+```bash
+python run.py
+```
+
+Searches, then drafts DOCX cover letters for the top three matches through the
+Claude API. This is a manual path, not part of the scheduled run, and it sends
+nothing. Cover letters land in `output/`, which is gitignored.
+
+**8. Optional dashboard.**
 
 ```bash
 python dashboard.py           # http://localhost:5000
