@@ -15,7 +15,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from job_normalize import (  # noqa: E402
+from core.job_normalize import (  # noqa: E402
     canonical_url,
     dedup_key,
     find_near_duplicates,

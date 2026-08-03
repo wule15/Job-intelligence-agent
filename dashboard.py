@@ -5,8 +5,8 @@ Then open: http://localhost:5000
 """
 
 from flask import Flask, render_template, request, jsonify
-from config import Config
-from utils import format_cv_label
+from core.config import Config
+from core.utils import format_cv_label
 import sqlite3
 from datetime import datetime
 

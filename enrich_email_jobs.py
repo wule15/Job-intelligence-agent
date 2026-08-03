@@ -21,8 +21,8 @@ import re
 import argparse
 import requests
 from bs4 import BeautifulSoup
-from config import Config
-from job_filter import JobFilter
+from core.config import Config
+from core.job_filter import JobFilter
 
 
 _SCRAPE_SKIP = re.compile(

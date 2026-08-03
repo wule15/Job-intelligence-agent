@@ -21,10 +21,10 @@ the careers page URL:
 import json
 from pathlib import Path
 
-from config import Config
-from http_client import build_session
-from job_normalize import canonical_url
-from utils import setup_logging
+from core.config import Config
+from core.http_client import build_session
+from core.job_normalize import canonical_url
+from core.utils import setup_logging
 
 logger = setup_logging('job_search_ats')
 

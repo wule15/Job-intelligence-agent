@@ -11,10 +11,10 @@ import sys
 import json
 from pathlib import Path
 from job_search_smart import SmartJobSearcher
-from cover_letter_generator import CoverLetterGenerator
-from database import Database
-from utils import setup_logging
-from config import Config
+from core.cover_letter_generator import CoverLetterGenerator
+from core.database import Database
+from core.utils import setup_logging
+from core.config import Config
 from docx import Document
 from docx.shared import Pt, Inches
 

@@ -11,8 +11,8 @@ Covers all major job boards (LinkedIn, Indeed, Glassdoor, etc.) in one shot.
 
 import os
 import requests
-from utils import setup_logging
-from config import Config
+from core.utils import setup_logging
+from core.config import Config
 
 logger = setup_logging('job_search_serpapi')
 

@@ -6,9 +6,9 @@ Matches jobs to best CV and creates custom cover letters.
 import json
 from pathlib import Path
 from anthropic import Anthropic
-from config import Config
-from database import Database
-from utils import setup_logging, format_cv_label
+from core.config import Config
+from core.database import Database
+from core.utils import setup_logging, format_cv_label
 
 logger = setup_logging('cover_letter_generator')
 

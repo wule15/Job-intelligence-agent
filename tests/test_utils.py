@@ -12,8 +12,8 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-import config  # noqa: E402
-from utils import format_cv_label, sanitize_filename, is_remote_job  # noqa: E402
+from core import config  # noqa: E402
+from core.utils import format_cv_label, sanitize_filename, is_remote_job  # noqa: E402
 
 
 @pytest.fixture(autouse=True)

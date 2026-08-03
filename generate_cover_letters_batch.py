@@ -5,9 +5,9 @@ import sqlite3
 import time
 from datetime import datetime
 from pathlib import Path
-from config import Config
-from utils import format_cv_label
-from cover_letter_generator import CoverLetterGenerator
+from core.config import Config
+from core.utils import format_cv_label
+from core.cover_letter_generator import CoverLetterGenerator
 import requests
 from docx import Document
 from docx.shared import Pt, Inches

@@ -13,8 +13,8 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-import source_health  # noqa: E402
-from source_health import SourceResult, summary_table, track  # noqa: E402
+from core import source_health  # noqa: E402
+from core.source_health import SourceResult, summary_table, track  # noqa: E402
 
 
 @pytest.fixture

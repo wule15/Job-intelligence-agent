@@ -5,8 +5,8 @@ Checks links and filters out dead/old job postings.
 
 import requests
 from datetime import datetime, timedelta
-from http_client import build_session
-from utils import setup_logging
+from core.http_client import build_session
+from core.utils import setup_logging
 
 logger = setup_logging('job_validator')
 
