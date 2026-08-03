@@ -187,9 +187,11 @@ Python 3.11 or newer, no framework.
 | Tests | pytest |
 | Normalisation | standard library only, `re` and `urllib.parse` |
 
-162 tests, covering scoring, filtering, deduplication, storage, source health, digest composition, retry policy and the validator regression. Every test runs against fixtures and temporary files. No test touches a real database or makes a network call.
+165 tests, covering scoring, filtering, deduplication, storage, source health, digest composition, retry policy and two regressions that each cost real results. Every test runs against fixtures and temporary files. No test touches a real database or makes a network call.
 
-The connectors have no tests. Each one makes a live network call, and mocking eleven third-party APIs is a larger job than this project justifies. That is a real gap and it is where a bug would hide.
+One connector has tests. The other nine do not. Each makes a live network call, and mocking ten third-party APIs is a larger job than this project justifies, so the ones that exist assert on what a connector would send rather than on what comes back.
+
+That gap is not theoretical. The Jobicy connector sent a geo value the API rejects, so it answered 400 to every request and that source returned nothing on every run for as long as it had been wired in. Nothing crashed and nothing was logged at error level, because a source returning zero jobs looks exactly like a source with no matches. It was found by calling the keyless sources directly and reading what came back, which is a check worth running after any change to this layer.
 
 ---
 
@@ -245,7 +247,7 @@ Put them in `resumes/` as PDFs. Skills are extracted from them on first run and 
 
 ```bash
 python validate_system.py     # configuration and connectivity
-pytest                        # 162 tests, no network
+pytest                        # 165 tests, no network
 python job_search_smart.py    # one real run
 ```
 
@@ -306,7 +308,7 @@ _Screenshot to be added._
 
 The three I would raise first if you were reviewing this.
 
-**No connector tests.** Eleven sources, all making live network calls, none covered. The scoring and deduplication core is well tested; the code that talks to the outside world is not.
+**Nine of ten connectors have no tests.** They all make live network calls. The scoring and deduplication core is well tested; the code that talks to the outside world mostly is not. One silent failure has already been found there and fixed, and finding it needed a manual pass over the keyless sources rather than the test suite.
 
 **Deduplication is normalisation, not understanding.** It handles decorated titles and legal suffixes well. It cannot tell that two differently named subsidiaries of the same group are one employer, and it will not catch a job reposted with a genuinely different title.
 
