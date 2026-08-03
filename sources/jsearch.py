@@ -11,7 +11,7 @@ from core.job_filter import JobFilter
 from core.utils import setup_logging
 import os
 
-logger = setup_logging('job_search_jsearch')
+logger = setup_logging('sources.jsearch')
 
 class JSearchJobScraper:
     """Search jobs using JSearch API."""

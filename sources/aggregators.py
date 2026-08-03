@@ -11,7 +11,7 @@ import requests
 from core.config import Config
 from core.utils import setup_logging
 
-logger = setup_logging('job_connectors')
+logger = setup_logging('sources.aggregators')
 
 class ApolloJobConnector:
     """Search Apollo for job listings."""

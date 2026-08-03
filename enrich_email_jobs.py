@@ -152,7 +152,7 @@ def run(days_back: int | None = None, rescore: bool = False):
         # 1b. Apify crawler for JS-heavy pages plain requests can't handle
         if not description and link:
             try:
-                from job_search_apify import scrape_job_page
+                from sources.apify import scrape_job_page
                 description = scrape_job_page(link)
                 if description:
                     source_label = 'Apify crawl'

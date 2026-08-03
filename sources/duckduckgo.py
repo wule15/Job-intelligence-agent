@@ -12,7 +12,7 @@ import time
 from datetime import datetime
 from core.utils import setup_logging
 
-logger = setup_logging('job_search_ddg')
+logger = setup_logging('sources.duckduckgo')
 
 # Job board sites to target
 SITES = [
