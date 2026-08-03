@@ -13,7 +13,7 @@ from core.job_filter import JobFilter
 from core.utils import setup_logging
 import re
 
-logger = setup_logging('job_search_gmail')
+logger = setup_logging('sources.gmail_drafts')
 
 class GmailDraftJobExtractor:
     """Extract job listings from Gmail drafts."""

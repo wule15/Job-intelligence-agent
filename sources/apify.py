@@ -16,7 +16,7 @@ import time
 from datetime import datetime
 from core.utils import setup_logging
 
-logger = setup_logging('job_search_apify')
+logger = setup_logging('sources.apify')
 
 
 def _client():

@@ -24,7 +24,7 @@ from core.http_client import build_session
 from core.job_normalize import canonical_url
 from core.utils import setup_logging
 
-logger = setup_logging('job_search_linkedin')
+logger = setup_logging('sources.linkedin')
 
 SEARCH_URL = 'https://www.linkedin.com/jobs-guest/jobs/api/seeMoreJobPostings/search'
 

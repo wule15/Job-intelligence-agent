@@ -14,7 +14,7 @@ import re
 from core.utils import setup_logging
 from datetime import datetime
 
-logger = setup_logging('job_search_linkedin_rss')
+logger = setup_logging('sources.linkedin_rss')
 
 HEADERS = {
     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 '

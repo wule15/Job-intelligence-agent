@@ -14,7 +14,7 @@ import requests
 from core.utils import setup_logging
 from core.config import Config
 
-logger = setup_logging('job_search_serpapi')
+logger = setup_logging('sources.serpapi')
 
 SERPAPI_URL = 'https://serpapi.com/search.json'
 

@@ -19,7 +19,7 @@ import time
 from datetime import datetime
 from core.utils import setup_logging
 
-logger = setup_logging('job_search_free')
+logger = setup_logging('sources.free_boards')
 
 HEADERS = {
     'User-Agent': 'Mozilla/5.0 (compatible; JobDigest/1.0)'

@@ -6,16 +6,16 @@ Searches across all internet job boards via JSearch API.
 
 import json
 from pathlib import Path
-from job_search_free import FreeJobSearcher
-from job_search_jsearch import JSearchJobScraper
-from job_search_linkedin_rss import LinkedInRSSSearcher
-from job_search_serpapi import SerpAPIJobSearcher
-from job_search_gmail_drafts import GmailDraftJobExtractor
-from job_search_connectors import MultiConnectorJobSearch
-from job_search_ddg import DDGJobSearcher
-from job_search_apify import ApifyJobSearcher
-from job_search_linkedin import LinkedInJobSearcher
-from job_search_ats import ATSJobSearcher, enrich_descriptions
+from sources.free_boards import FreeJobSearcher
+from sources.jsearch import JSearchJobScraper
+from sources.linkedin_rss import LinkedInRSSSearcher
+from sources.serpapi import SerpAPIJobSearcher
+from sources.gmail_drafts import GmailDraftJobExtractor
+from sources.aggregators import MultiConnectorJobSearch
+from sources.duckduckgo import DDGJobSearcher
+from sources.apify import ApifyJobSearcher
+from sources.linkedin import LinkedInJobSearcher
+from sources.ats import ATSJobSearcher, enrich_descriptions
 from core.job_filter import JobFilter, title_prescreen
 from core.job_validator import JobValidator
 from core.job_normalize import canonical_url, dedup_key, find_near_duplicates

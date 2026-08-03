@@ -105,13 +105,13 @@ class TestConnectorsUseIt:
         assert adapter.max_retries.total == config.Config.RETRY_ATTEMPTS
 
     def test_linkedin_session_retries(self):
-        from job_search_linkedin import LinkedInJobSearcher
+        from sources.linkedin import LinkedInJobSearcher
         adapter = LinkedInJobSearcher().session.get_adapter('https://example.com')
         assert adapter.max_retries.total == config.Config.RETRY_ATTEMPTS
 
     def test_ats_session_retries(self):
-        import job_search_ats
-        adapter = job_search_ats.session.get_adapter('https://example.com')
+        from sources import ats
+        adapter = ats.session.get_adapter('https://example.com')
         assert adapter.max_retries.total == config.Config.RETRY_ATTEMPTS
 
     def test_ats_module_makes_no_bare_requests_calls(self):
@@ -119,6 +119,6 @@ class TestConnectorsUseIt:
         A bare requests.get bypasses the session and loses the retry policy.
         Catching it here is cheaper than noticing a source went quiet.
         """
-        source = (Path(__file__).resolve().parent.parent / 'job_search_ats.py').read_text()
+        source = (Path(__file__).resolve().parent.parent / 'sources' / 'ats.py').read_text()
         assert 'requests.get(' not in source
         assert 'requests.post(' not in source

@@ -26,7 +26,7 @@ from core.http_client import build_session
 from core.job_normalize import canonical_url
 from core.utils import setup_logging
 
-logger = setup_logging('job_search_ats')
+logger = setup_logging('sources.ats')
 
 TIMEOUT = 12
 HEADERS = {'User-Agent': 'job-intelligence-agent (+https://github.com/)'}
