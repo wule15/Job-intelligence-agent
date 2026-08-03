@@ -118,7 +118,7 @@ def main():
 
         print("\nTo run manually anytime:")
         print("  python job_search_smart.py")
-        print("  python run.py")
+        print("  python write_cover_letters.py")
 
         logger.info("System validation PASSED")
         return 0
