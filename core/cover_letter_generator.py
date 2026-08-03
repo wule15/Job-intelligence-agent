@@ -6,11 +6,40 @@ Matches jobs to best CV and creates custom cover letters.
 import json
 from pathlib import Path
 from anthropic import Anthropic
+from docx import Document
+from docx.shared import Pt, Inches
 from core.config import Config
 from core.database import Database
 from core.utils import setup_logging, format_cv_label
 
 logger = setup_logging('cover_letter_generator')
+
+
+def save_as_docx(text, filepath):
+    """
+    Write letter text to a Word document, one paragraph per line.
+
+    Blank lines keep their spacing removed so a letter written with blank
+    lines between paragraphs does not come out double spaced.
+    """
+    doc = Document()
+
+    for section in doc.sections:
+        section.top_margin = Inches(1)
+        section.bottom_margin = Inches(1)
+        section.left_margin = Inches(1.2)
+        section.right_margin = Inches(1.2)
+
+    for line in text.strip().split('\n'):
+        paragraph = doc.add_paragraph()
+        run = paragraph.add_run(line)
+        run.font.name = 'Calibri'
+        run.font.size = Pt(11)
+        if not line.strip():
+            paragraph.paragraph_format.space_after = Pt(0)
+
+    doc.save(filepath)
+    return filepath
 
 # ── Role-aware pitch style ────────────────────────────────────────────────────
 _PITCH_STYLES = {

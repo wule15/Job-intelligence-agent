@@ -496,7 +496,7 @@ def main():
         print(f"Summary: Found {len(jobs)} relevant jobs matching your profile")
         print("="*70)
         print("\nNext: Generate cover letters for top matches:")
-        print("  python run.py")
+        print("  python write_cover_letters.py")
 
         return 0
 

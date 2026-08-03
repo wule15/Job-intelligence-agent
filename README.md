@@ -270,12 +270,18 @@ composes the digest from what is stored and sends it.
 **7. Optional, cover letters by hand.**
 
 ```bash
-python run.py
+python write_cover_letters.py              # stored jobs with no letter yet
+python write_cover_letters.py --search     # search first, then use the results
+python write_cover_letters.py --limit 5    # default is 3
 ```
 
-Searches, then drafts DOCX cover letters for the top three matches through the
-Claude API. This is a manual path, not part of the scheduled run, and it sends
-nothing. Cover letters land in `output/`, which is gitignored.
+Drafts DOCX cover letters through the Claude API. This is a manual path, not
+part of the scheduled run, and it sends nothing. Letters land in `output/`,
+which is gitignored, and you review them before they go anywhere.
+
+The default reads what the scheduled run already stored and skips any job that
+already has a letter, so running it twice does not pay for the same letter
+twice. Each letter is one API call, which is why the count is capped.
 
 **8. Optional dashboard.**
 

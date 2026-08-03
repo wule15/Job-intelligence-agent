@@ -273,6 +273,24 @@ class Database:
         cursor.execute('SELECT COUNT(*) FROM cover_letters_sent WHERE job_id = ?', (job_id,))
         return cursor.fetchone()[0] > 0
 
+    def get_jobs_without_cover_letters(self, limit=3):
+        """
+        Best scoring jobs that have no letter yet, highest score first.
+
+        Letter generation costs an API call each, so the caller works through
+        a few at a time and this is what decides which few. Excluding jobs
+        already in cover_letters_sent is what makes repeated runs safe.
+        """
+        cursor = self.connection.cursor()
+        cursor.execute('''
+            SELECT id, job_title, company, description, link, best_cv
+            FROM jobs
+            WHERE id NOT IN (SELECT job_id FROM cover_letters_sent)
+            ORDER BY relevance_score DESC, extracted_date DESC
+            LIMIT ?
+        ''', (limit,))
+        return cursor.fetchall()
+
     def is_job_link_seen(self, job_link):
         """Check if we've already processed this job link."""
         try:
