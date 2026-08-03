@@ -170,21 +170,40 @@ def search_arbeitnow(query, pages=3):
 
 # ── The Muse ──────────────────────────────────────────────────────────────────
 
-def search_the_muse(keywords, pages=5):
+# The Muse expects this exact string. Asking for remote jobs server-side is
+# the difference between 20 usable listings a page and roughly one in a
+# hundred, because the unfiltered feed is overwhelmingly on-site.
+MUSE_REMOTE_LOCATION = 'Flexible / Remote'
+
+
+def search_the_muse(keywords, pages=3):
     """
     The Muse public API — https://www.themuse.com/api/public/jobs
-    No category filter (too restrictive); fetch recent jobs, filter client-side.
     No key required.
+
+    Filter by location server-side. Without it the endpoint returns every
+    job The Muse lists, over 20,000 pages of mostly on-site roles, and the
+    client-side remote check then discards about 99 percent of what was
+    fetched. Measured on the live API: five unfiltered pages yielded one
+    remote job, and one filtered page yields twenty.
+
+    The client-side remote check below is kept as a safety net. It is
+    redundant while the parameter works and costs nothing, and it means a
+    silent change to the API cannot start letting on-site jobs through.
     """
     import re
-    logger.info("[The Muse] Fetching recent jobs...")
+    logger.info("[The Muse] Fetching remote jobs...")
     kw_lower = [k.lower() for k in keywords]
     jobs = []
 
     for page in range(1, pages + 1):
         data = _get(
             'https://www.themuse.com/api/public/jobs',
-            params={'page': page, 'descending': 'true'}
+            params={
+                'page': page,
+                'descending': 'true',
+                'location': MUSE_REMOTE_LOCATION,
+            }
         )
         if not data or not data.get('results'):
             break

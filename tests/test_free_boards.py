@@ -57,6 +57,33 @@ class TestJobicyGeoRegression:
         assert '400' in doc
 
 
+class TestMuseFiltersServerSide:
+    """
+    Same failure mode as Jobicy, reached a different way. The connector
+    worked, returned a valid empty-ish list, and nobody noticed it was
+    scanning a hundred listings to find one.
+    """
+
+    def test_asks_the_api_for_remote_jobs(self):
+        source = inspect.getsource(free_boards.search_the_muse)
+        assert "'location'" in source or '"location"' in source, (
+            'search_the_muse must filter by location server-side. Without it '
+            'the endpoint returns every job The Muse lists and the client-side '
+            'check discards about 99 percent of what was fetched.'
+        )
+
+    def test_uses_the_exact_location_string_the_api_expects(self):
+        assert free_boards.MUSE_REMOTE_LOCATION == 'Flexible / Remote'
+
+    def test_keeps_the_client_side_remote_check_as_a_safety_net(self):
+        """
+        Belt and braces. If the parameter silently stops filtering, on-site
+        jobs must still not reach the digest.
+        """
+        source = inspect.getsource(free_boards.search_the_muse)
+        assert 'is_remote' in source
+
+
 class TestSearchAllSurvivesOneDeadSource:
     """
     One source failing must never end the run. This is the property the
