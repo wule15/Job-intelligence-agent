@@ -227,11 +227,17 @@ def search_jobicy(tag, count=50):
     """
     Jobicy remote jobs API — https://jobicy.com/api/v2/remote-jobs
     Free, no key, supports ?tag= and ?industry=.
+
+    Do not send geo=worldwide. The API validates geo against a list of real
+    regions (usa, europe, uk, emea, apac) and answers 400 to anything else,
+    so geo=worldwide made every call fail and this source returned nothing on
+    every run. Omitting geo is what actually means worldwide. There is a test
+    asserting the rejected values do not come back.
     """
     logger.info(f"[Jobicy] Searching tag: {tag}")
     data = _get(
         'https://jobicy.com/api/v2/remote-jobs',
-        params={'count': count, 'geo': 'worldwide', 'tag': tag}
+        params={'count': count, 'tag': tag}
     )
     if not data:
         return []
