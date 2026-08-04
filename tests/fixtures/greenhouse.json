@@ -1,0 +1,143 @@
+{
+ "jobs": [
+  {
+   "absolute_url": "https://helsing.ai/jobs/4865187101?gh_jid=4865187101",
+   "data_compliance": [
+    {
+     "type": "gdpr",
+     "requires_consent": false,
+     "requires_processing_consent": false,
+     "requires_retention_consent": false,
+     "retention_period": null,
+     "demographic_data_consent_applies": false
+    }
+   ],
+   "internal_job_id": 4469020101,
+   "location": {
+    "name": "Munich"
+   },
+   "metadata": [
+    {
+     "id": 7229084101,
+     "name": "Confidential role",
+     "value": false,
+     "value_type": "yes_no"
+    }
+   ],
+   "id": 4865187101,
+   "updated_at": "2026-06-08T07:07:06-04:00",
+   "requisition_id": "661",
+   "title": "Accounts Payable Lead",
+   "company_name": "Helsing",
+   "first_published": "2026-05-13T07:19:54-04:00",
+   "language": "en",
+   "application_deadline": null,
+   "content": "&lt;h2&gt;&lt;strong&gt;Who we are&lt;/strong&gt;&lt;/h2&gt;\n&lt;div&gt;\n&lt;p&gt;&lt;span data-contrast=&quot;auto&quot;&gt;Helsing is a defence AI company. Our mission is to protect our democracies. We aim to achieve technological leadership, so that open societies can continue to make sovereign decisions and control their ethical standards.&lt;/span&gt;&lt;span data-ccp-props=&quot;{&quot;&gt;&",
+   "departments": [
+    {
+     "id": 4016408101,
+     "name": "Finance",
+     "child_ids": [],
+     "parent_id": 4016403101
+    }
+   ],
+   "offices": [
+    {
+     "id": 4007985101,
+     "name": "Munich",
+     "location": "M\u00fcnchen, Germany",
+     "child_ids": [],
+     "parent_id": 4017954101
+    }
+   ],
+   "ai_disclaimer": null,
+   "include_ai_disclaimer": null,
+   "ai_opt_out_request_url": null
+  },
+  {
+   "absolute_url": "https://helsing.ai/jobs/4911999101?gh_jid=4911999101",
+   "data_compliance": [
+    {
+     "type": "gdpr",
+     "requires_consent": false,
+     "requires_processing_consent": false,
+     "requires_retention_consent": false,
+     "retention_period": null,
+     "demographic_data_consent_applies": false
+    }
+   ],
+   "internal_job_id": 4088593101,
+   "location": {
+    "name": "Berlin; London; Munich; Paris"
+   },
+   "metadata": [
+    {
+     "id": 7229084101,
+     "name": "Confidential role",
+     "value": false,
+     "value_type": "yes_no"
+    }
+   ],
+   "id": 4911999101,
+   "updated_at": "2026-07-16T11:40:12-04:00",
+   "requisition_id": "7",
+   "title": "AI Research Engineer -  3D Computer Vision",
+   "company_name": "Helsing",
+   "first_published": "2026-06-29T11:47:48-04:00",
+   "language": "en",
+   "application_deadline": null,
+   "content": "&lt;h2&gt;&lt;strong&gt;Who we are&lt;/strong&gt;&lt;/h2&gt;\n&lt;div&gt;\n&lt;p&gt;&lt;span data-contrast=&quot;auto&quot;&gt;Helsing is a defence AI company. Our mission is to protect our democracies. We aim to achieve technological leadership, so that open societies can continue to make sovereign decisions and control their ethical standards.&lt;/span&gt;&lt;span data-ccp-props=&quot;{&quot;&gt;&",
+   "departments": [
+    {
+     "id": 4016414101,
+     "name": "AI & Engineering",
+     "child_ids": [],
+     "parent_id": 4016411101
+    }
+   ],
+   "offices": [
+    {
+     "id": 4023319101,
+     "name": "Barcelona",
+     "location": null,
+     "child_ids": [],
+     "parent_id": 4023318101
+    },
+    {
+     "id": 4007986101,
+     "name": "Berlin",
+     "location": "Berlin, Germany",
+     "child_ids": [],
+     "parent_id": 4017954101
+    },
+    {
+     "id": 4007984101,
+     "name": "London",
+     "location": "London, United Kingdom",
+     "child_ids": [],
+     "parent_id": 4017953101
+    },
+    {
+     "id": 4007985101,
+     "name": "Munich",
+     "location": "M\u00fcnchen, Germany",
+     "child_ids": [],
+     "parent_id": 4017954101
+    },
+    {
+     "id": 4007987101,
+     "name": "Paris",
+     "location": "Paris, France",
+     "child_ids": [],
+     "parent_id": 4017955101
+    }
+   ],
+   "ai_disclaimer": null,
+   "include_ai_disclaimer": null,
+   "ai_opt_out_request_url": null
+  }
+ ],
+ "meta": {
+  "total": 131
+ }
+}

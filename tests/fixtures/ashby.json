@@ -1,0 +1,67 @@
+{
+ "jobs": [
+  {
+   "id": "287c3920-1c9c-4a84-95e2-2854abb47990",
+   "title": "Forward Deployed Engineer",
+   "department": "Product Development",
+   "team": "Product Development",
+   "employmentType": "FullTime",
+   "location": "Paris",
+   "shouldDisplayCompensationOnJobPostings": false,
+   "secondaryLocations": [],
+   "publishedAt": "2026-07-03T12:16:54.579+00:00",
+   "isListed": true,
+   "isRemote": true,
+   "workplaceType": "Hybrid",
+   "address": {
+    "postalAddress": {
+     "addressRegion": "Paris",
+     "addressCountry": "France",
+     "addressLocality": "Paris"
+    }
+   },
+   "jobUrl": "https://jobs.ashbyhq.com/comand-ai/287c3920-1c9c-4a84-95e2-2854abb47990",
+   "applyUrl": "https://jobs.ashbyhq.com/comand-ai/287c3920-1c9c-4a84-95e2-2854abb47990/application",
+   "descriptionHtml": "<p style=\"min-height:1.5em\">Comand AI\u2019s mission is to build next generation C2 software with real users in real deployments in the field. We are fully indexed on the success of every single user. We work onsite with users and customers and contribute to real operational work.</p><p style=\"min-height:1.5em\">We\u2019re looking for mission-driven, humble builders to be members of our Forward Deployed Engi",
+   "descriptionPlain": "Comand AI\u2019s mission is to build next generation C2 software with real users in real deployments in the field. We are fully indexed on the success of every single user. We work onsite with users and customers and contribute to real operational work.\n\nWe\u2019re looking for mission-driven, humble builders to be members of our Forward Deployed Engineering team. You\u2019ll work hand in hand with our customers ",
+   "compensation": {
+    "compensationTierSummary": null,
+    "scrapeableCompensationSalarySummary": null,
+    "compensationTiers": [],
+    "summaryComponents": []
+   }
+  },
+  {
+   "id": "8ff597f4-bcd8-4fd6-baff-792d602fc2bf",
+   "title": "Computer Vision Engineer",
+   "department": "Product Development",
+   "team": "Product Development",
+   "employmentType": "FullTime",
+   "location": "Paris",
+   "shouldDisplayCompensationOnJobPostings": false,
+   "secondaryLocations": [],
+   "publishedAt": "2026-07-06T22:15:17.019+00:00",
+   "isListed": true,
+   "isRemote": true,
+   "workplaceType": "Hybrid",
+   "address": {
+    "postalAddress": {
+     "addressRegion": "Paris",
+     "addressCountry": "France",
+     "addressLocality": "Paris"
+    }
+   },
+   "jobUrl": "https://jobs.ashbyhq.com/comand-ai/8ff597f4-bcd8-4fd6-baff-792d602fc2bf",
+   "applyUrl": "https://jobs.ashbyhq.com/comand-ai/8ff597f4-bcd8-4fd6-baff-792d602fc2bf/application",
+   "descriptionHtml": "<p style=\"min-height:1.5em\">Comand AI's mission is to build next-generation C2 software with real users in real deployments. We are fully indexed on the success of every single user, which means our research has to work in the field, not on a benchmark.</p><p style=\"min-height:1.5em\">As a Computer Vision Engineer, you own the hardest perception problems in the stack. The job is to crack the scient",
+   "descriptionPlain": "Comand AI's mission is to build next-generation C2 software with real users in real deployments. We are fully indexed on the success of every single user, which means our research has to work in the field, not on a benchmark.\n\nAs a Computer Vision Engineer, you own the hardest perception problems in the stack. The job is to crack the scientific problems that prevent us from turning multi-source se",
+   "compensation": {
+    "compensationTierSummary": null,
+    "scrapeableCompensationSalarySummary": null,
+    "compensationTiers": [],
+    "summaryComponents": []
+   }
+  }
+ ],
+ "apiVersion": "1"
+}

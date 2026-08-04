@@ -187,11 +187,15 @@ Python 3.11 or newer, no framework.
 | Tests | pytest |
 | Normalisation | standard library only, `re` and `urllib.parse` |
 
-168 tests, covering scoring, filtering, deduplication, storage, source health, digest composition, retry policy and three regressions that each cost real results. Every test runs against fixtures and temporary files. No test touches a real database or makes a network call.
+190 tests, covering scoring, filtering, deduplication, storage, source health, digest composition, retry policy and three regressions that each cost real results. Every test runs against fixtures and temporary files. No test touches a real database or makes a network call.
 
-One connector has tests. The other nine do not. Each makes a live network call, and mocking ten third-party APIs is a larger job than this project justifies, so the ones that exist assert on what a connector would send rather than on what comes back.
+The connectors have tests now. Not by mocking ten third-party APIs, which is a larger job than this project justifies, but by capturing one real response per source, trimming it to two jobs, and asserting on the record the parser produces. That covers the half of a connector that breaks silently: the mapping from somebody else's JSON shape into ours.
 
-That gap is not theoretical. The Jobicy connector sent a geo value the API rejects, so it answered 400 to every request and that source returned nothing on every run for as long as it had been wired in. Nothing crashed and nothing was logged at error level, because a source returning zero jobs looks exactly like a source with no matches. It was found by calling the keyless sources directly and reading what came back, which is a check worth running after any change to this layer.
+They were written because three bugs were found in that layer by hand, all with the same shape. The Jobicy connector sent a geo value the API rejects, so it answered 400 to every request and returned nothing on every run. The Muse fetched an unfiltered feed and discarded 99 percent of it in Python. And the Greenhouse description parser unescaped HTML after stripping tags instead of before, so every Greenhouse description arrived full of markup and fed tag names and data attributes straight into keyword scoring.
+
+The third one was found by these tests, on their first run.
+
+What they do not cover is the network. The fixtures go stale if a provider changes their schema, and green tests here are not evidence of a live system.
 
 ---
 
@@ -247,7 +251,7 @@ Put them in `resumes/` as PDFs. Skills are extracted from them on first run and 
 
 ```bash
 python validate_system.py     # configuration and connectivity
-pytest                        # 168 tests, no network
+pytest                        # 190 tests, no network
 python job_search_smart.py    # one real run
 ```
 
@@ -295,12 +299,11 @@ python dashboard.py           # http://localhost:5000
 
 ## The daily digest
 
-<!-- SCREENSHOT PLACEHOLDER
-     Replace this block with a real Telegram digest screenshot.
-     ![Daily digest in Telegram](docs/telegram-digest.png)
--->
+![Daily digest in Telegram](docs/telegram-digest.png)
 
-_Screenshot to be added._
+Fifteen a day, capped at two per employer, each one carrying the score and which CV scored it.
+
+The percentages are a ranking device, not a probability. A score is the count of that CV's skill terms appearing in the job text over a denominator capped at 15, so 43 percent means roughly six or seven terms matched, not that the job is a 43 percent fit. It exists to order the list and to fill the quota, and the known weaknesses section below is honest about what it cannot see.
 
 ---
 
@@ -308,7 +311,7 @@ _Screenshot to be added._
 
 The three I would raise first if you were reviewing this.
 
-**Nine of ten connectors have no tests.** They all make live network calls. The scoring and deduplication core is well tested; the code that talks to the outside world mostly is not. One silent failure has already been found there and fixed, and finding it needed a manual pass over the keyless sources rather than the test suite.
+**The connector tests are fixture based, so they will go stale.** They pin the parser against a response captured on one day. If a provider changes their JSON shape the tests keep passing and the connector quietly stops working, which is the exact failure they were written to catch. They need re-capturing periodically and nothing currently reminds anyone to do it.
 
 **Deduplication is normalisation, not understanding.** It handles decorated titles and legal suffixes well. It cannot tell that two differently named subsidiaries of the same group are one employer, and it will not catch a job reposted with a genuinely different title.
 

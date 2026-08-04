@@ -47,13 +47,30 @@ PAGE_SIZE = 100
 
 
 def _strip_html(text):
-    """Crude tag strip. Descriptions are only used for keyword scoring."""
+    """
+    Reduce a description to plain text for keyword scoring.
+
+    Unescape before stripping, and unescape again after. The order matters
+    and getting it wrong is silent.
+
+    Greenhouse returns its content HTML-escaped, so the raw string holds
+    "&lt;h2&gt;" rather than "<h2>". Stripping first finds no tags to strip,
+    and the later unescape then turns the entities into live markup, so the
+    description arrives full of tags and attributes. Those feed straight into
+    keyword scoring, where a class name or a data attribute containing a
+    skill term inflates the score of a job that never mentioned it.
+
+    The second unescape catches entities that were double encoded, which
+    several boards do.
+    """
     if not text:
         return ''
     import html
     import re
+    text = html.unescape(text)
     text = re.sub(r'<[^>]+>', ' ', text)
     text = html.unescape(text)
+    text = re.sub(r'<[^>]+>', ' ', text)
     return re.sub(r'\s+', ' ', text).strip()
 
 
