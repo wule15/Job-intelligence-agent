@@ -204,7 +204,7 @@ What they do not cover is the network. The fixtures go stale if a provider chang
 **1. Clone and install.**
 
 ```bash
-git clone https://github.com/wule15/job-intelligence-agent.git
+git clone https://github.com/wule15/Job-intelligence-agent.git
 cd job-intelligence-agent
 python -m venv .venv
 source .venv/bin/activate      # Windows: .venv\Scripts\activate
