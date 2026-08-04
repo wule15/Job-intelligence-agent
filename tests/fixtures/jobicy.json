@@ -1,0 +1,53 @@
+{
+ "apiVersion": "2.2.15",
+ "documentationUrl": "https://jobi.cy/apidocs",
+ "friendlyNotice": "Thanks for using Jobicy API! Please ensure Jobicy is clearly credited with a direct link to the source, and all application buttons redirect to the original job URL provided in this feed. That\u2019s all! You might be building something amazing, we wish you the best of luck!",
+ "jobCount": 2,
+ "lastUpdate": "2026-08-03T10:21:24+00:00",
+ "appliedFilters": {
+  "count": 2,
+  "tag": "engineering"
+ },
+ "jobs": [
+  {
+   "id": 150121,
+   "url": "https://jobicy.com/jobs/150121-engineering-manager-python-and-k8s",
+   "jobSlug": "150121-engineering-manager-python-and-k8s",
+   "jobTitle": "Engineering Manager - Python and K8s",
+   "companyName": "Canonical Ltd.",
+   "companyLogo": "https://jobicy.com/data/server-nyc0409/galaxy/mercury/2025/06/b4d068a9-221-1.png",
+   "jobIndustry": [
+    "Product &amp; Operations"
+   ],
+   "jobType": [
+    "Full-Time"
+   ],
+   "jobGeo": "APAC,  EMEA",
+   "jobLevel": "Midweight",
+   "jobExcerpt": "Canonical is a leading provider of open source software and operating systems to the global enterprise and technology markets. Our platform, Ubuntu, is very widely used in breakthrough enterprise initiatives such as public cloud, data science, AI, engineering innovation, and IoT. Our customers include the world's leading public cloud and silicon providers, and industry leaders&hellip;",
+   "jobDescription": "<p>Canonical is a leading provider of open source software and operating systems to the global enterprise and technology markets. Our platform, Ubuntu, is very widely used in breakthrough enterprise initiatives such as public cloud, data science, AI, engineering innovation, and IoT. Our customers include the world's leading public cloud and silicon providers, and industry leaders in many sectors. ",
+   "pubDate": "2026-08-03T10:21:24+00:00"
+  },
+  {
+   "id": 150061,
+   "url": "https://jobicy.com/jobs/150061-senior-backend-engineer-ai-engineering-chat",
+   "jobSlug": "150061-senior-backend-engineer-ai-engineering-chat",
+   "jobTitle": "Senior Backend Engineer, AI Engineering: Chat",
+   "companyName": "GitLab",
+   "companyLogo": "https://jobicy.com/data/server-nyc0409/galaxy/mercury/2020/12/WRILS-201207055737-109952.jpg",
+   "jobIndustry": [
+    "Software Engineering"
+   ],
+   "jobType": [
+    "Full-Time"
+   ],
+   "jobGeo": "UK",
+   "jobLevel": "Senior",
+   "jobExcerpt": "GitLab is the intelligent orchestration platform for DevSecOps. GitLab enables organizations to increase developer productivity, improve operational efficiency, reduce security and compliance risk, and accelerate digital transformation. More than 50 million registered users and more than 50% of the Fortune 100* trust GitLab to ship better, more secure software faster. The same principles built int",
+   "jobDescription": "<div><p>GitLab is the intelligent orchestration platform for DevSecOps. GitLab enables organizations to increase developer productivity, improve operational efficiency, reduce security and compliance risk, and accelerate digital transformation. More than 50 million registered users and more than 50% of the Fortune 100* trust GitLab to ship better, more secure software faster.</p>\n<p>The same princ",
+   "pubDate": "2026-08-01T03:29:44+00:00"
+  }
+ ],
+ "statusCode": 200,
+ "success": true
+}
