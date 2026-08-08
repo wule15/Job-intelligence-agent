@@ -12,10 +12,61 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from core.job_filter import (  # noqa: E402
+    is_blocked_source,
     is_geo_restricted,
     is_non_english_title,
+    is_us_located,
+    us_location_multiplier,
+    US_LOCATION_PENALTY,
     TITLE_BOOST_MULTIPLIER,
 )
+
+
+class TestUSDownrank:
+    """US-located jobs with no worldwide/EU signal are penalised, not dropped.
+    A worldwide-remote signal or a European location cancels the penalty."""
+
+    def test_city_state_is_us(self):
+        assert is_us_located('Austin, TX')
+
+    def test_spelled_out_country_is_us(self):
+        assert is_us_located('Remote, United States')
+
+    def test_european_location_is_not_us(self):
+        assert not is_us_located('Berlin, Germany')
+
+    def test_us_job_is_penalised(self):
+        assert us_location_multiplier({'location': 'Austin, TX'}) == US_LOCATION_PENALTY
+
+    def test_us_but_worldwide_is_not_penalised(self):
+        assert us_location_multiplier(
+            {'location': 'Austin, TX', 'description': 'Fully remote worldwide.'}) == 1.0
+
+    def test_european_job_is_not_penalised(self):
+        assert us_location_multiplier({'location': 'Berlin, Germany'}) == 1.0
+
+
+class TestBlockedSource:
+    """Fake or malicious boards must be dropped, whichever field names them
+    and whether they appear as a display name, a slug or a domain."""
+
+    def test_display_name_in_company_is_blocked(self):
+        assert is_blocked_source({'company': 'Vacancy Global Pro'})
+
+    def test_hyphenated_slug_is_blocked(self):
+        assert is_blocked_source({'source': 'remote-zest-jobs'})
+
+    def test_domain_in_link_is_blocked(self):
+        assert is_blocked_source({'link': 'https://remoteclickjobs.com/apply/42'})
+
+    def test_legitimate_job_passes(self):
+        assert not is_blocked_source({
+            'company': 'Emerson', 'source': 'Greenhouse',
+            'link': 'https://boards.greenhouse.io/emerson/jobs/1',
+        })
+
+    def test_empty_job_passes(self):
+        assert not is_blocked_source({})
 
 
 class TestScoring:
@@ -124,6 +175,26 @@ class TestFilterJobs:
     def test_geo_restricted_is_rejected(self, job_filter, make_job):
         jobs = [make_job(description='Must be authorized to work in the US. Valve sizing.')]
         assert job_filter.filter_jobs(jobs, min_score=0) == []
+
+    def test_blocked_source_is_rejected(self, job_filter, make_job):
+        """Even a perfectly matching job is dropped if it comes from a fake board."""
+        jobs = [make_job(
+            description='Valve sizing, Kv calculation, P&ID and ATEX.',
+            company='Remote Zest Jobs',
+        )]
+        assert job_filter.filter_jobs(jobs, min_score=0) == []
+
+    def test_us_job_is_downranked_not_dropped(self, job_filter, make_job):
+        """A US-located job is kept but scores below its identical EU twin."""
+        desc = 'Valve sizing, Kv calculation, P&ID and ATEX.'
+        jobs = [
+            make_job(description=desc, location='Austin, TX'),
+            make_job(description=desc, location='Rotterdam, Netherlands'),
+        ]
+        kept = job_filter.filter_jobs(jobs, min_score=0)
+        assert len(kept) == 2, "the US job must be kept, only downranked"
+        assert kept[0]['location'] == 'Rotterdam, Netherlands'
+        assert kept[0]['relevance_score'] > kept[1]['relevance_score']
 
     def test_non_english_title_is_rejected(self, job_filter, make_job):
         jobs = [make_job(title='Vertriebsingenieur',
