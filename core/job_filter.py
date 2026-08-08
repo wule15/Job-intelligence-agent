@@ -81,6 +81,85 @@ def is_geo_restricted(job_title: str, job_description: str, location: str = '') 
 
     return True  # Geo-restricted, no override
 
+# ── Blocked sources ───────────────────────────────────────────────────────────
+# Fake or malicious job boards: near-identical sites under rotating names that
+# redirect to third-party pages rather than a real employer. A job whose source,
+# company or link matches any marker below is dropped before it is ever scored.
+#
+# Matching is done on an alphanumeric-only, lowercased form of the field, so a
+# single marker catches the display name, the hyphenated slug and the domain
+# alike: 'vacancyglobalpro' matches 'Vacancy Global Pro', 'vacancy-global-pro'
+# and 'vacancyglobalpro.com'. To block another site, add its squashed name here.
+BLOCKED_SOURCE_MARKERS = (
+    'vacancyglobalpro',   # Vacancy Global Pro
+    'remotezestjobs',     # Remote Zest Jobs
+    'remoteclickjobs',    # Remote Click Jobs
+)
+
+
+def _squash(value: str) -> str:
+    """Lowercase and strip to letters and digits, so name, slug and domain
+    forms of the same source collapse to one comparable token."""
+    return re.sub(r'[^a-z0-9]', '', (value or '').lower())
+
+
+def is_blocked_source(job: dict) -> bool:
+    """Return True if the job comes from a known fake or malicious board.
+
+    Checks the fields that identify where a listing originated, source,
+    company and link, against BLOCKED_SOURCE_MARKERS. The title and description
+    are deliberately not checked: a real job can mention any word, and matching
+    there would drop legitimate listings.
+    """
+    haystack = _squash(
+        f"{job.get('source', '')} {job.get('company', '')} {job.get('link', '')}"
+    )
+    return any(marker in haystack for marker in BLOCKED_SOURCE_MARKERS)
+
+
+# ── US location downrank ──────────────────────────────────────────────────────
+# A US-located listing carrying no worldwide or European eligibility signal is
+# pushed down the digest rather than dropped, because such a listing is
+# occasionally a genuinely worldwide-remote role. The penalty multiplies the
+# relevance score and is applied after the minimum-score gate, so it reorders
+# the digest without ever removing a job the score alone would have kept.
+US_LOCATION_PENALTY = 0.6
+
+_US_STATE_CODES = frozenset((
+    'AL', 'AK', 'AZ', 'AR', 'CA', 'CO', 'CT', 'DE', 'FL', 'GA', 'HI', 'ID',
+    'IL', 'IN', 'IA', 'KS', 'KY', 'LA', 'ME', 'MD', 'MA', 'MI', 'MN', 'MS',
+    'MO', 'MT', 'NE', 'NV', 'NH', 'NJ', 'NM', 'NY', 'NC', 'ND', 'OH', 'OK',
+    'OR', 'PA', 'RI', 'SC', 'SD', 'TN', 'TX', 'UT', 'VT', 'VA', 'WA', 'WV',
+    'WI', 'WY', 'DC',
+))
+_US_NAME_MARKERS = ('united states', 'usa', 'u.s.a', 'u.s.')
+
+
+def is_us_located(location: str) -> bool:
+    """Best-effort detection of a United States location, covering the
+    'City, ST' form job boards emit and the spelled-out country name."""
+    loc = (location or '').lower()
+    if any(marker in loc for marker in _US_NAME_MARKERS):
+        return True
+    for part in re.split(r'[,/|]', location or ''):
+        head = part.strip().upper().split(' ')[0] if part.strip() else ''
+        if head in _US_STATE_CODES or head == 'US':
+            return True
+    return False
+
+
+def us_location_multiplier(job: dict) -> float:
+    """Score multiplier for the US downrank. 1.0 leaves the score unchanged;
+    US_LOCATION_PENALTY sinks a US-located job with no worldwide/EU signal."""
+    text = (job.get('title', '') + ' ' + job.get('description', '') + ' '
+            + job.get('location', '')).lower()
+    if any(phrase in text for phrase in GEO_ALLOW_PHRASES):
+        return 1.0  # worldwide or European eligibility stated, no penalty
+    if is_us_located(job.get('location', '')):
+        return US_LOCATION_PENALTY
+    return 1.0
+
+
 # ── Target role keywords — presence in title boosts score ────────────────────
 TITLE_BOOST_KEYWORDS = [
     'sales engineer', 'technical sales', 'pre-sales', 'presales',
@@ -331,6 +410,7 @@ class JobFilter:
         # instead of only what it kept. Silent discarding is how the link
         # validation bug survived for weeks.
         rejected = {
+            'blocked_source': 0,
             'not_remote': 0,
             'dealbreaker': 0,
             'geo_restricted': 0,
@@ -346,6 +426,13 @@ class JobFilter:
             always_include = job.get('source') in ALWAYS_INCLUDE_SOURCES
 
             if not always_include:
+                # Cheapest and most decisive test: a fake or malicious board is
+                # dropped outright, before any keyword or scoring work.
+                if is_blocked_source(job):
+                    logger.debug(f"Blocked source: {title} @ {company}")
+                    rejected['blocked_source'] += 1
+                    continue
+
                 if remote_only and not self.is_remote(job):
                     rejected['not_remote'] += 1
                     continue
@@ -370,7 +457,10 @@ class JobFilter:
                 rejected['below_min_score'] += 1
                 continue
 
-            job['relevance_score'] = score
+            # US downrank is applied after the min-score gate and skipped for
+            # hand-saved jobs, so it only reorders and never drops.
+            multiplier = 1.0 if always_include else us_location_multiplier(job)
+            job['relevance_score'] = round(score * multiplier)
             job['best_cv'] = best_cv
             scored_jobs.append(job)
 
