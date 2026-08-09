@@ -111,6 +111,9 @@ class Config:
     # Master CV: single source of truth the scorer reads its variants from.
     # Gitignored and never published; see master-cv.example.yaml for the format.
     MASTER_CV_PATH = os.getenv("MASTER_CV_PATH", str(PROJECT_ROOT / "master-cv.yaml"))
+    # Optional label stamped on the Telegram digest header, so two engines
+    # running in parallel can be told apart from the message alone.
+    DIGEST_LABEL = os.getenv("DIGEST_LABEL", "")
 
     @classmethod
     def validate(cls):

@@ -196,12 +196,14 @@ def send_telegram_message(message):
 
 def format_job_digest(jobs):
     """Format job digest for Telegram."""
+    # A label lets two engines running side by side be told apart in the chat.
+    label = f" {Config.DIGEST_LABEL}" if Config.DIGEST_LABEL else ""
     if not jobs:
-        message = "📭 <b>No new jobs found</b>\n\nAll caught up — check again tomorrow!"
+        message = f"📭 <b>No new jobs found</b>{label}\n\nAll caught up — check again tomorrow!"
         return message, []
 
     job_ids = [job[0] for job in jobs]
-    message = f"🔍 <b>Daily Job Digest</b>\n"
+    message = f"🔍 <b>Daily Job Digest</b>{label}\n"
     message += f"<i>{datetime.now().strftime('%Y-%m-%d %H:%M')}</i>\n\n"
     message += f"<b>{len(jobs)}</b> new jobs:\n\n"
 
