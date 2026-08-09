@@ -9,7 +9,10 @@ beautifulsoup4==4.12.0
 ddgs==9.13.0
 apify-client>=1.7.0
 
-# CV parsing, feeds the skill extractor
+# Master CV, the single source of truth the scorer reads its variants from
+PyYAML>=6.0
+
+# CV parsing, the fallback skill extractor for setups without a master CV
 pdfplumber==0.10.0
 
 # Cover letter generation

@@ -9,6 +9,7 @@ from pathlib import Path
 from core.config import Config
 from core.utils import setup_logging
 from core.synonym_map import skill_matches
+from core.cv_variants import load_variants
 
 logger = setup_logging('job_filter')
 
@@ -265,14 +266,27 @@ class JobFilter:
         self.all_skills = self.extract_all_skills()
 
     def load_keywords(self):
-        """Load extracted keywords from cache."""
+        """Load the skills profile the scorer matches against.
+
+        Prefers the master CV: its `variants:` section is the single source of
+        truth, read directly, no PDF extraction. Falls back to the old extracted
+        keyword cache when no master CV is present, so existing setups keep
+        working.
+        """
+        variants = load_variants(Config.MASTER_CV_PATH)
+        if variants:
+            return variants
+
         cache_file = Path(Config.KEYWORDS_CACHE)
         try:
             if cache_file.exists():
                 with open(cache_file, 'r') as f:
                     return json.load(f)
             else:
-                logger.warning(f"Keywords file not found at {cache_file}")
+                logger.warning(
+                    f"No master CV at {Config.MASTER_CV_PATH} and no keyword "
+                    f"cache at {cache_file}"
+                )
         except Exception as e:
             logger.error(f"Error loading keywords: {e}")
         return {'cvs': {}, 'linkedin': {}, 'merged_skills': {}}

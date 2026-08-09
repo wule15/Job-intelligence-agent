@@ -108,6 +108,9 @@ class Config:
     # File Paths
     KEYWORDS_CACHE = str(DATA_DIR / "keywords.json")
     JOB_SEARCH_CONFIG = str(CONFIG_DIR / "job_search_config.json")
+    # Master CV: single source of truth the scorer reads its variants from.
+    # Gitignored and never published; see master-cv.example.yaml for the format.
+    MASTER_CV_PATH = os.getenv("MASTER_CV_PATH", str(PROJECT_ROOT / "master-cv.yaml"))
 
     @classmethod
     def validate(cls):
