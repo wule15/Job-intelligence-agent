@@ -12,6 +12,11 @@ client_secret*.json
 *.p12
 *.key
 
+# Plain-text token notes kept locally. Never publish these.
+git.txt
+*token*.txt
+*.token
+
 # ---------------------------------------------------------------------------
 # Runtime data. This project runs against one person's real job search,
 # so none of it belongs in version control.
