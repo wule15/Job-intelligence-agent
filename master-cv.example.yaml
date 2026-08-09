@@ -1,0 +1,51 @@
+# master-cv.example.yaml
+#
+# Template for the master CV the job scorer reads. Copy this to master-cv.yaml,
+# which is gitignored and never published, and fill in your own variants.
+#
+# A "variant" is one way you present yourself for a kind of role. The scorer
+# matches every job against every variant and reports which one fits best, so
+# for each job you are told which CV to apply with. List the skills and keywords
+# that matter for that variant; a job scores by how many of them it mentions.
+#
+# `skills` can be a plain list, where every skill counts equally, or a mapping
+# of skill -> weight when you want some skills to count for more.
+#
+# Only the `variants:` section is used by the job agent. Your real master-cv.yaml
+# may also hold the rest of your CV (history, education, and so on) used
+# elsewhere; the scorer ignores everything except `variants:`.
+
+variants:
+
+  sales_engineer:
+    label: Sales Engineer
+    skills:
+      - valve sizing
+      - flow control
+      - technical sales
+      - pre-sales
+      - P&ID
+      - pneumatic actuators
+      - commissioning
+      - bid management
+
+  mechanical_engineer:
+    label: Mechanical Engineer
+    skills:
+      - mechanical design
+      - process engineering
+      - fluid systems
+      - CFD
+      - FEA
+      - GD&T
+      - ATEX
+
+  technical_writer:
+    label: Technical Writer
+    # Mapping form: higher weight means the skill matters more for this variant.
+    skills:
+      technical writing: 3
+      documentation: 3
+      SEO: 2
+      content strategy: 2
+      B2B content: 2
