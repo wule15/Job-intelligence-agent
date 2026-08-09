@@ -37,6 +37,12 @@ linkedin profile/
 *.pdf
 *.docx
 
+# Master CV: the single source of truth the scorer reads. Holds real employer
+# names, so it is never published. Only the blank example is committed.
+master-cv.yaml
+master-cv.*.yaml
+!master-cv.example.yaml
+
 # Skill cache extracted from the CVs
 cache/
 keywords.json
