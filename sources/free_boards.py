@@ -451,7 +451,10 @@ def search_jooble(query, location='remote'):
             return []
         data = r.json()
     except Exception as e:
-        logger.warning(f"[Jooble] Failed: {e}")
+        # Log the error type only. The Jooble API key sits in the request URL
+        # path, and a requests exception repr can embed the full URL, so logging
+        # the whole exception could leak the key into a log file.
+        logger.warning(f"[Jooble] Failed: {type(e).__name__}")
         return []
 
     jobs = []
