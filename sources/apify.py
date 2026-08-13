@@ -1,6 +1,6 @@
 """
 Job search via Apify actors.
-Uses pre-built actors for LinkedIn Jobs and Indeed — full descriptions,
+Uses pre-built actors for LinkedIn Jobs and Indeed, full descriptions,
 salaries, apply links. Far more structured than DDG snippets.
 
 Actors used:
@@ -55,12 +55,15 @@ def search_linkedin(queries: list[str], max_per_query: int = 25) -> list[dict]:
     for query in queries:
         logger.info(f"[Apify/LinkedIn] Searching: {query!r}")
         try:
+            # timeout_secs caps how long we wait for the actor. Without it a
+            # runaway actor blocks the whole daily run, which is exactly how the
+            # Indeed scraper used to stall for 30+ minutes.
             run = client.actor("bebity/linkedin-jobs-scraper").call(run_input={
                 "queries": [query],
                 "locationFilter": "Remote",
                 "datePostedFilter": "past-week",
                 "count": max_per_query,
-            })
+            }, timeout_secs=120)
             for item in client.dataset(run["defaultDatasetId"]).iterate_items():
                 try:
                     jobs.append({
@@ -104,7 +107,7 @@ def search_indeed(queries: list[str], max_per_query: int = 25) -> list[dict]:
                 "location": "Remote",
                 "maxItems": max_per_query,
                 "parseJobDetail": True,
-            })
+            }, timeout_secs=120)
             for item in client.dataset(run["defaultDatasetId"]).iterate_items():
                 try:
                     jobs.append({
@@ -131,7 +134,7 @@ def search_indeed(queries: list[str], max_per_query: int = 25) -> list[dict]:
 def scrape_job_page(url: str) -> str | None:
     """
     Use Apify's website-content-crawler to get a job description from
-    any ATS page — including JS-heavy ones like Workday.
+    any ATS page, including JS-heavy ones like Workday.
     Returns plain text or None.
     """
     try:
@@ -158,12 +161,12 @@ class ApifyJobSearcher:
         """
         Run LinkedIn with specific queries + Indeed once with a broad query.
         LinkedIn: $1/1,000 (specific skill-based queries for quality)
-        Indeed: $6/1,000 (single broad query for diversity — one call per session)
+        Indeed: $6/1,000 (single broad query for diversity, one call per session)
         """
         all_jobs: list[dict] = []
         seen: set[str] = set()
 
-        # 1. LinkedIn — all specific queries (top 3)
+        # 1. LinkedIn, all specific queries (top 3)
         logger.info(f"[Apify/LinkedIn] Searching {len(queries[:3])} specific queries...")
         for job in search_linkedin(queries[:3]):
             link = job.get("link", "")
@@ -172,14 +175,13 @@ class ApifyJobSearcher:
                 seen.add(key)
                 all_jobs.append(job)
 
-        # 2. Indeed — TWO broad queries per session (cost control: $6/1,000 × 2 = ~$0.02 per run)
-        logger.info(f"[Apify/Indeed] Searching with broad queries...")
-        for job in search_indeed(["remote engineer", "content strategy"]):
-            link = job.get("link", "")
-            key  = link or f"{job['title']}|{job['company']}"
-            if key not in seen:
-                seen.add(key)
-                all_jobs.append(job)
+        # 2. Indeed via Apify is DISABLED on purpose. The misceres/indeed-scraper
+        #    ignores maxItems and crawls the whole location (4,000+ pages), which
+        #    stalled the daily run for 30+ minutes and burned the entire monthly
+        #    Apify free credit in a single call. Its output is also the lowest
+        #    value in the digest: Indeed is demoted, and the ATS boards plus the
+        #    free aggregators already cover this ground. Re-enable only behind an
+        #    actor that honours a hard page cap. search_indeed() is kept for that.
 
-        logger.info(f"[Apify] {len(all_jobs)} unique jobs total")
+        logger.info(f"[Apify] {len(all_jobs)} unique jobs total (Indeed disabled)")
         return all_jobs

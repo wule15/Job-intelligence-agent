@@ -53,13 +53,13 @@ class Config:
     # Example: "Jane_Doe_CV_" turns "Jane_Doe_CV_Sales.pdf" into "Sales".
     CV_FILENAME_PREFIX = os.getenv("CV_FILENAME_PREFIX", "")
 
-    # Gmail Configuration (IMAP) — primary account
+    # Gmail Configuration (IMAP), primary account
     GMAIL_USER = os.getenv("GMAIL_USER")
     GMAIL_APP_PASSWORD = os.getenv("GMAIL_APP_PASSWORD")
     GMAIL_IMAP_HOST = "imap.gmail.com"
     GMAIL_IMAP_PORT = 993
 
-    # Second Gmail account — application tracking inbox
+    # Second Gmail account, application tracking inbox
     GMAIL_USER_2 = os.getenv("GMAIL_USER_2")
     GMAIL_APP_PASSWORD_2 = os.getenv("GMAIL_APP_PASSWORD_2")
 
@@ -77,12 +77,12 @@ class Config:
     # Claude API Configuration
     ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY")
 
-    # Adzuna API (free tier — 250 req/day, has salary data)
+    # Adzuna API (free tier, 250 req/day, has salary data)
     # Get keys at: https://developer.adzuna.com/
     ADZUNA_APP_ID  = os.getenv("ADZUNA_APP_ID")
     ADZUNA_APP_KEY = os.getenv("ADZUNA_APP_KEY")
 
-    # Jooble API (free tier — global aggregator, 140k+ sources)
+    # Jooble API (free tier, global aggregator, 140k+ sources)
     # Get key at: https://jooble.org/api/about
     JOOBLE_API_KEY = os.getenv("JOOBLE_API_KEY")
 

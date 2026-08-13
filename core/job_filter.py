@@ -13,7 +13,7 @@ from core.cv_variants import load_variants
 
 logger = setup_logging('job_filter')
 
-# ── Negative keywords — jobs containing these are auto-rejected ──────────────
+# ── Negative keywords, jobs containing these are auto-rejected ──────────────
 NEGATIVE_KEYWORDS = [
     # Clearance / citizenship
     'security clearance', 'clearance required', 'top secret', 'secret clearance',
@@ -26,61 +26,92 @@ NEGATIVE_KEYWORDS = [
     'relocation required', 'must relocate',
 ]
 
-# ── Geo-restriction filter ────────────────────────────────────────────────────
-# Phrases that explicitly lock the job to a non-European geography
-GEO_BLOCK_PHRASES = [
-    # US work authorisation
-    'must be authorized to work in the us',
-    'must be authorized to work in the united states',
-    'authorized to work in the united states',
-    'legally authorized to work in the us',
-    'legally authorized to work in the united states',
-    'must be eligible to work in the us',
-    'eligible to work in the united states',
-    'us work authorization required',
-    'work authorization required in the us',
-    # Residence / location requirements
-    'must reside in the us', 'must be located in the us',
-    'must be based in the us', 'must live in the us',
-    'must reside in the united states', 'must be located in the united states',
-    'us residents only', 'united states only', 'us only',
-    'us-based candidates only', 'us based candidates only',
-    'candidates must be in the us', 'candidates must be in the united states',
-    # Canada-only
-    'must be authorized to work in canada', 'canada only', 'canadian residents only',
-    # Australia-only
-    'must be authorized to work in australia', 'australia only',
+# ── Work-eligibility filter ───────────────────────────────────────────────────
+# The user is a non-EU / non-US national (Serbia). A job anywhere, EU, US, UK, is
+# takeable only if they can legally work it: it either offers visa sponsorship, or
+# does not require existing local work authorization (remote-global roles, or ones
+# that simply do not restrict). A job that requires existing authorization and does
+# not sponsor is dropped, wherever it is. Geography is no longer the filter; the
+# right to actually take the job is.
+
+# Positive: an explicit sponsorship / relocation offer, or worldwide eligibility.
+# Any of these keeps the job AND exempts it from the US relocation downrank.
+SPONSORSHIP_PHRASES = [
+    'visa sponsorship', 'sponsor a visa', 'sponsor your visa', 'we sponsor',
+    'will sponsor', 'happy to sponsor', 'happily sponsor', 'glad to sponsor',
+    'we can sponsor', 'we do sponsor', 'sponsor visas', 'sponsoring visas',
+    'sponsor a work visa', 'sponsor work visas', 'sponsorship available',
+    'offer sponsorship', 'provide sponsorship', 'sponsorship provided',
+    'work visa sponsorship', 'work permit sponsorship', 'visa support',
+    'relocation support', 'relocation assistance', 'relocation package',
+    'we relocate', 'open to international', 'international applicants welcome',
+    'hire internationally', 'visa sponsorship available',
 ]
 
-# Phrases that confirm European / worldwide eligibility — if present the job passes
-GEO_ALLOW_PHRASES = [
-    'europe', 'european', 'emea', 'worldwide', 'global', 'anywhere in the world',
-    'open to candidates worldwide', 'international candidates',
-    'bosnia', 'serbia', 'balkans', 'remote worldwide', 'fully remote worldwide',
-    'work from anywhere',
+# Explicit refusals of sponsorship. Checked BEFORE the positive
+# SPONSORSHIP_PHRASES, because "no visa sponsorship" contains "visa sponsorship"
+# and would otherwise read as an offer.
+NO_SPONSOR_PHRASES = [
+    'no visa sponsorship', 'no sponsorship available', 'not offer sponsorship',
+    'do not offer sponsorship', 'do not provide sponsorship', 'cannot sponsor',
+    'unable to sponsor', 'unable to provide sponsorship', 'without sponsorship',
+    'not able to sponsor', 'sponsorship is not available', 'we do not sponsor',
+    'no relocation',
 ]
+
+# The job requires existing local work authorization. Country-agnostic
+# ("authorized to work in ...") plus the US / UK / EU / CA / AU residence locks.
+# Dropped UNLESS a sponsorship or worldwide phrase overrides.
+GEO_BLOCK_PHRASES = [
+    # existing authorization required (generic, any country)
+    'must be authorized to work in', 'must be authorised to work in',
+    'must have the right to work in', 'must be eligible to work in',
+    'must be legally authorized to work', 'must be legally authorised to work',
+    'work authorization required', 'work authorisation required',
+    'must hold a valid work permit', 'valid work permit required',
+    'must have existing work authorization',
+    'must be a citizen', 'must be a permanent resident',
+    # region locks
+    'us residents only', 'united states only', 'us only', 'us-based candidates only',
+    'us based candidates only', 'us citizens only', 'green card',
+    'eu citizens only', 'eu nationals only', 'uk residents only',
+    'right to work in the uk', 'canada only', 'canadian residents only',
+    'australia only',
+]
+
+# Confirms worldwide / remote-global eligibility, or that no permit is needed.
+# Overrides a block phrase and exempts from the US relocation downrank. Note:
+# "europe"/"EMEA" is NOT here, a Serbian national has no automatic EU work right,
+# so an EU-authorization requirement must still be caught unless sponsored.
+GEO_ALLOW_PHRASES = [
+    'worldwide', 'global', 'anywhere in the world', 'work from anywhere',
+    'open to candidates worldwide', 'remote worldwide', 'fully remote worldwide',
+    'international candidates', 'no visa required', 'no work permit required',
+    'no sponsorship required', 'bosnia', 'serbia', 'balkans',
+]
+
 
 def is_geo_restricted(job_title: str, job_description: str, location: str = '') -> bool:
-    """
-    Return True if the job appears geo-restricted to a non-European region.
+    """Return True when the user could not legally take this job: it requires
+    existing local work authorization and offers no sponsorship.
 
-    Logic:
-      1. If any GEO_BLOCK_PHRASE is found → blocked, UNLESS a GEO_ALLOW_PHRASE
-         is also present (e.g. "US preferred but open to Europe").
-      2. If no block phrase is found → allowed (assume open unless stated otherwise).
+    A sponsorship / relocation offer, or a worldwide / remote-global / no-permit
+    signal, keeps the job. Nothing stated at all is treated as open, worth applying.
     """
     text = (job_title + ' ' + job_description + ' ' + location).lower()
-
-    blocked = any(phrase in text for phrase in GEO_BLOCK_PHRASES)
-    if not blocked:
-        return False  # No explicit block — pass through
-
-    # Block phrase found — check if an allow phrase overrides it
-    allowed = any(phrase in text for phrase in GEO_ALLOW_PHRASES)
-    if allowed:
-        return False  # Overridden — e.g. "US preferred but open to EMEA"
-
-    return True  # Geo-restricted, no override
+    no_sponsor = any(phrase in text for phrase in NO_SPONSOR_PHRASES)
+    worldwide = any(phrase in text for phrase in GEO_ALLOW_PHRASES)
+    # A refusal ("no visa sponsorship") must not read as an offer, so require
+    # no_sponsor to be false before trusting a positive sponsorship phrase.
+    offers_sponsorship = (not no_sponsor) and any(
+        phrase in text for phrase in SPONSORSHIP_PHRASES)
+    if offers_sponsorship or worldwide:
+        return False  # sponsored, or worldwide / no permit needed, takeable
+    if no_sponsor:
+        return True  # explicitly will not sponsor, cannot take
+    if any(phrase in text for phrase in GEO_BLOCK_PHRASES):
+        return True  # needs existing authorization, no sponsorship, cannot take
+    return False  # unstated, assume open
 
 # ── Blocked sources ───────────────────────────────────────────────────────────
 # Fake or malicious job boards: near-identical sites under rotating names that
@@ -93,9 +124,31 @@ def is_geo_restricted(job_title: str, job_description: str, location: str = '') 
 # and 'vacancyglobalpro.com'. To block another site, add its squashed name here.
 BLOCKED_SOURCE_MARKERS = (
     'vacancyglobalpro',   # Vacancy Global Pro
+    'vacancyjobspro',     # Vacancy Jobs Pro (rebrand)
     'remotezestjobs',     # Remote Zest Jobs
+    'zestjobs',           # Zest Jobs (rebrand)
     'remoteclickjobs',    # Remote Click Jobs
 )
+
+# Free hosting subdomains a legitimate employer does not use for an apply page,
+# but AI-generated fake boards spin up by the dozen and rotate through. A job
+# whose apply link, or a link inside its description, points at one of these is
+# almost certainly a decoy that funnels applicants to a scam destination.
+FREE_PAAS_HOSTS = (
+    'railway.app', 'onrender.com', 'render.com', 'vercel.app', 'netlify.app',
+    'fly.dev', 'pages.dev', 'glitch.me', 'replit.app', 'repl.co', 'herokuapp.com',
+)
+
+# Known scam funnel destinations these boards redirect applicants to. Add new
+# ones here as they surface; this is the stable signal, the board names rotate.
+BLOCKED_DESTINATION_DOMAINS = (
+    'victorytuitions.in',
+)
+
+# host in group 1, path in group 2
+_URL_RE = re.compile(r'https?://([a-z0-9.\-]+)([^\s"\'<>)]*)', re.I)
+# path fragments that mark a URL as a job posting rather than, say, a demo link
+_JOB_PATH_RE = re.compile(r'/(job|jobs|apply|career|vacan|position|opening|hiring)', re.I)
 
 
 def _squash(value: str) -> str:
@@ -104,18 +157,53 @@ def _squash(value: str) -> str:
     return re.sub(r'[^a-z0-9]', '', (value or '').lower())
 
 
+def _urls_in(text: str) -> list:
+    """Return (host, path) for every http(s) URL in text, host lowercased."""
+    return [(h.lower(), p) for h, p in _URL_RE.findall(text or '')]
+
+
+def _is_scam_destination(host: str) -> bool:
+    return any(host == d or host.endswith('.' + d) for d in BLOCKED_DESTINATION_DOMAINS)
+
+
+def _is_free_paas(host: str) -> bool:
+    return any(host == p or host.endswith('.' + p) for p in FREE_PAAS_HOSTS)
+
+
 def is_blocked_source(job: dict) -> bool:
     """Return True if the job comes from a known fake or malicious board.
 
-    Checks the fields that identify where a listing originated, source,
-    company and link, against BLOCKED_SOURCE_MARKERS. The title and description
-    are deliberately not checked: a real job can mention any word, and matching
-    there would drop legitimate listings.
+    Two layers, weakest to strongest:
+      1. Name match, source, company and squashed link against
+         BLOCKED_SOURCE_MARKERS. Cheap, but the board names rotate.
+      2. Destination match, the reliable signal. These decoys funnel applicants
+         through a free-PaaS subdomain to a scam destination, so the apply link
+         and the description are scanned for those hosts. This catches the whole
+         family even when the listing arrives through a legitimate aggregator
+         (e.g. Indeed) whose own link is an indeed.com URL, because the real
+         destination still sits in the body.
     """
     haystack = _squash(
         f"{job.get('source', '')} {job.get('company', '')} {job.get('link', '')}"
     )
-    return any(marker in haystack for marker in BLOCKED_SOURCE_MARKERS)
+    if any(marker in haystack for marker in BLOCKED_SOURCE_MARKERS):
+        return True
+
+    # The apply link is the strong signal: a free-PaaS host or a known scam
+    # destination there is decisive, a real employer never applies through one.
+    for host, _path in _urls_in(job.get('link', '')):
+        if _is_scam_destination(host) or _is_free_paas(host):
+            return True
+
+    # The description is weaker: block a known scam destination outright, but a
+    # free-PaaS host only when the URL itself looks like a job/apply page, so a
+    # legitimate listing that merely links a demo on vercel.app is not dropped.
+    for host, path in _urls_in(job.get('description', '')):
+        if _is_scam_destination(host):
+            return True
+        if _is_free_paas(host) and _JOB_PATH_RE.search(path):
+            return True
+    return False
 
 
 # ── US location downrank ──────────────────────────────────────────────────────
@@ -125,6 +213,12 @@ def is_blocked_source(job: dict) -> bool:
 # relevance score and is applied after the minimum-score gate, so it reorders
 # the digest without ever removing a job the score alone would have kept.
 US_LOCATION_PENALTY = 0.6
+
+# Remote is preferred but not required. A non-remote job (on-site or hybrid) is
+# pushed down rather than dropped, so EU on-site industrial roles still appear,
+# just below equally scored remote ones. Milder than the US penalty on purpose:
+# an on-site role in the user's own region is worth surfacing.
+REMOTE_PREFERENCE_PENALTY = 0.85
 
 _US_STATE_CODES = frozenset((
     'AL', 'AK', 'AZ', 'AR', 'CA', 'CO', 'CT', 'DE', 'FL', 'GA', 'HI', 'ID',
@@ -154,14 +248,15 @@ def us_location_multiplier(job: dict) -> float:
     US_LOCATION_PENALTY sinks a US-located job with no worldwide/EU signal."""
     text = (job.get('title', '') + ' ' + job.get('description', '') + ' '
             + job.get('location', '')).lower()
-    if any(phrase in text for phrase in GEO_ALLOW_PHRASES):
-        return 1.0  # worldwide or European eligibility stated, no penalty
+    if (any(phrase in text for phrase in SPONSORSHIP_PHRASES)
+            or any(phrase in text for phrase in GEO_ALLOW_PHRASES)):
+        return 1.0  # sponsored, worldwide, or no-permit, a US role here is wanted
     if is_us_located(job.get('location', '')):
         return US_LOCATION_PENALTY
     return 1.0
 
 
-# ── Target role keywords — presence in title boosts score ────────────────────
+# ── Target role keywords, presence in title boosts score ────────────────────
 TITLE_BOOST_KEYWORDS = [
     'sales engineer', 'technical sales', 'pre-sales', 'presales',
     'application engineer', 'solutions engineer', 'technical account',
@@ -176,7 +271,7 @@ TITLE_BOOST_KEYWORDS = [
 ]
 TITLE_BOOST_MULTIPLIER = 1.4  # 40% bonus when role matches title
 
-# ── Sector boost — companies/descriptions in these industries score higher ────
+# ── Sector boost, companies/descriptions in these industries score higher ────
 SECTOR_BOOST_KEYWORDS = [
     # Industrial / manufacturing
     'industrial', 'manufacturing', 'valve', 'fluid', 'hydraulic', 'pneumatic',
@@ -348,7 +443,7 @@ class JobFilter:
             if not cv_skills:
                 continue
             matches = sum(1 for s in cv_skills if skill_matches(s, desc_lower))
-            # Cap denominator at 15 — a job description will never mention all CV skills.
+            # Cap denominator at 15, a job description will never mention all CV skills.
             # Dividing by total skills (50+) made every score artificially low.
             # 3 matches out of 15 = 20%, not 6%.
             denominator = min(len(cv_skills), 15)
@@ -357,11 +452,11 @@ class JobFilter:
                 best_score = score
                 best_cv = cv_name
 
-        # Title boost — target role in job title
+        # Title boost, target role in job title
         if best_score > 0 and any(kw in title_lower for kw in TITLE_BOOST_KEYWORDS):
             best_score = round(min(100, best_score * TITLE_BOOST_MULTIPLIER), 1)
 
-        # Sector boost — industrial / SaaS company or description
+        # Sector boost, industrial / SaaS company or description
         sector_text = (job_description + ' ' + company).lower()
         if best_score > 0 and any(kw in sector_text for kw in SECTOR_BOOST_KEYWORDS):
             best_score = round(min(100, best_score * SECTOR_BOOST_MULTIPLIER), 1)
@@ -437,16 +532,17 @@ class JobFilter:
             description = job.get('description', '')
             company = job.get('company', '')
 
+            # A fake or malicious board is dropped outright, and this runs even
+            # for always-include sources: a scam must never bypass the block on a
+            # trusted label. Cheapest and most decisive test, before any scoring.
+            if is_blocked_source(job):
+                logger.debug(f"Blocked source: {title} @ {company}")
+                rejected['blocked_source'] += 1
+                continue
+
             always_include = job.get('source') in ALWAYS_INCLUDE_SOURCES
 
             if not always_include:
-                # Cheapest and most decisive test: a fake or malicious board is
-                # dropped outright, before any keyword or scoring work.
-                if is_blocked_source(job):
-                    logger.debug(f"Blocked source: {title} @ {company}")
-                    rejected['blocked_source'] += 1
-                    continue
-
                 if remote_only and not self.is_remote(job):
                     rejected['not_remote'] += 1
                     continue
@@ -471,9 +567,16 @@ class JobFilter:
                 rejected['below_min_score'] += 1
                 continue
 
-            # US downrank is applied after the min-score gate and skipped for
-            # hand-saved jobs, so it only reorders and never drops.
-            multiplier = 1.0 if always_include else us_location_multiplier(job)
+            # Location downranks are applied after the min-score gate and skipped
+            # for hand-saved jobs, so they only reorder and never drop. A US
+            # location and a non-remote (on-site/hybrid) role each push the job
+            # down; remote in the user's region stays on top, on-site still shows.
+            if always_include:
+                multiplier = 1.0
+            else:
+                multiplier = us_location_multiplier(job)
+                if not self.is_remote(job):
+                    multiplier *= REMOTE_PREFERENCE_PENALTY
             job['relevance_score'] = round(score * multiplier)
             job['best_cv'] = best_cv
             scored_jobs.append(job)

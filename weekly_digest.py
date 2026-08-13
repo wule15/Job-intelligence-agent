@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Weekly job search summary — sent every Monday via Telegram.
+Weekly job search summary, sent every Monday via Telegram.
 Covers the past 7 days: jobs found, applied, interviews, top matches, source breakdown.
 
 Add to run_job_search.bat or Task Scheduler:
@@ -106,8 +106,8 @@ def format_weekly_message(stats):
     if stats['top_jobs']:
         msg += f"<b>Top Matches</b>\n"
         for title, company, score, best_cv, link in stats['top_jobs']:
-            cv_label = format_cv_label(best_cv) or '—'
-            score_str = f"{round(score, 1)}%" if score else "—"
+            cv_label = format_cv_label(best_cv) or '-'
+            score_str = f"{round(score, 1)}%" if score else "-"
             title_short = title[:45] + '…' if len(title) > 45 else title
             if link:
                 msg += f"  • <a href='{link}'>{title_short}</a> @ {company}\n"
@@ -150,10 +150,10 @@ def main():
     today = datetime.now().weekday()  # 0 = Monday
 
     if today != 0:
-        print(f"[*] Not Monday (weekday={today}) — skipping weekly digest")
+        print(f"[*] Not Monday (weekday={today}), skipping weekly digest")
         return 0
 
-    print("[*] Monday — generating weekly digest...")
+    print("[*] Monday, generating weekly digest...")
     stats = get_weekly_stats()
     message = format_weekly_message(stats)
 

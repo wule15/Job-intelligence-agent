@@ -3,7 +3,7 @@ Job search via DuckDuckGo web search.
 Searches major job boards (Indeed, LinkedIn, Glassdoor, Wellfound) through DDG.
 Free, no API key required.
 
-Results are parsed from DDG snippets — less structured than JSearch,
+Results are parsed from DDG snippets, less structured than JSearch,
 but a solid fallback when paid quotas are exhausted.
 """
 
@@ -24,7 +24,7 @@ SITES = [
     'boards.greenhouse.io',
 ]
 
-# Title parse patterns — "Job Title at Company | Board" or "Job Title - Company"
+# Title parse patterns, "Job Title at Company | Board" or "Job Title - Company"
 TITLE_PATTERNS = [
     re.compile(r'^(.+?)\s+at\s+(.+?)\s*[|–\-]', re.IGNORECASE),  # "SE at Eaton |"
     re.compile(r'^(.+?)\s*[-–|]\s*(.+?)\s*[-–|]', re.IGNORECASE), # "SE - Eaton - remote"
@@ -66,7 +66,7 @@ def search_ddg(query: str, max_results: int = 15) -> list[dict]:
     try:
         from ddgs import DDGS
     except ImportError:
-        logger.warning("[DDG] ddgs package not installed — run: pip install ddgs")
+        logger.warning("[DDG] ddgs package not installed, run: pip install ddgs")
         return []
 
     results = []

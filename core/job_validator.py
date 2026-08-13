@@ -51,7 +51,7 @@ class JobValidator:
             return False
 
         try:
-            # Step 1: HEAD request — catch hard 404/410 quickly
+            # Step 1: HEAD request, catch hard 404/410 quickly
             response = self.session.head(url, timeout=timeout, allow_redirects=True)
             if response.status_code in [404, 410]:
                 logger.debug(f"Dead link ({response.status_code}): {url}")
@@ -64,7 +64,7 @@ class JobValidator:
                 except Exception:
                     return False
 
-            # Step 2: GET + content check — catch "expired" pages that still return 200
+            # Step 2: GET + content check, catch "expired" pages that still return 200
             try:
                 get_resp = self.session.get(url, timeout=timeout)
                 body = get_resp.text.lower()
@@ -148,8 +148,8 @@ class JobValidator:
                     # No link, skip it
                     continue
             elif check_links:
-                # Already checked max jobs — pass remaining through unverified
-                logger.debug(f"Skipped link check (already validated {checked_count} jobs) — passing through")
+                # Already checked max jobs, pass remaining through unverified
+                logger.debug(f"Skipped link check (already validated {checked_count} jobs), passing through")
                 valid_jobs.append(job)
             else:
                 # Not checking links, just add it

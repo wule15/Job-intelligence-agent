@@ -190,7 +190,7 @@ def dashboard():
 
             # Build Gmail search link
             # authuser=<email> forces the correct account regardless of u/0 vs u/1 slot.
-            # Fragments must NOT have the colon encoded — Gmail receives them raw.
+            # Fragments must NOT have the colon encoded, Gmail receives them raw.
             gmail_url = None
             if origin == 'email':
                 # Extract account email from source e.g. "Email / you@gmail.com"

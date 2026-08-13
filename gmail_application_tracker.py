@@ -35,7 +35,7 @@ from core.utils import setup_logging
 
 logger = setup_logging('gmail_application_tracker')
 
-# Lazy-loaded scorer — initialised once on first use
+# Lazy-loaded scorer, initialised once on first use
 _scorer = None
 
 def _get_scorer():
@@ -114,12 +114,12 @@ BODY_TITLE_PATTERNS = [
 ]
 
 BODY_COMPANY_PATTERNS = [
-    # Require capital letter start — avoids lowercase sentence fragments like "sea"
+    # Require capital letter start, avoids lowercase sentence fragments like "sea"
     re.compile(r"(?:at|with|@)\s+([A-Z][A-Za-z0-9][A-Za-z0-9\s&.'-]{1,38})\b"),
     re.compile(r"company[:\s]+([A-Z][A-Za-z0-9\s&.'-]{1,38})\b"),
 ]
 
-# Application confirmation keywords — email must contain at least one
+# Application confirmation keywords, email must contain at least one
 APPLICATION_KEYWORDS = [
     'applied', 'application', 'submitted', 'sent to', 'confirmation',
     'thank you for applying', 'your application has been',
@@ -146,7 +146,7 @@ def _decode(value):
     return ' '.join(result).strip()
 
 
-# ATS / job board URL patterns — these are posting pages, not marketing links
+# ATS / job board URL patterns, these are posting pages, not marketing links
 _JOB_URL_PATTERNS = [
     re.compile(r'https?://[^\s"\'<>]*(?:jobs\.lever\.co|boards\.greenhouse\.io|'
                r'ashbyhq\.com|recruitee\.com|jobs\.workday\.com|wd\d+\.myworkday\.com|'
@@ -376,7 +376,7 @@ def _extract_company_from_sender(sender: str) -> str | None:
 
     domain = addr_match.group(1).lower()
 
-    # Known ATS domains — extract subdomain as company name
+    # Known ATS domains, extract subdomain as company name
     for ats in ['myworkday.com', 'recruitee.com', 'ashbyhq.com', 'greenhouse.io',
                 'lever.co', 'smartrecruiters.com', 'jobvite.com', 'icims.com',
                 'taleo.net', 'csod.com', 'manatal.com', 'applytojob.com',
@@ -483,7 +483,7 @@ def _parse_application(subject: str, body: str, sender: str):
     if company:
         company = re.sub(r'\s+', ' ', company).strip()
 
-    # Validate — reject HTML/URL garbage
+    # Validate, reject HTML/URL garbage
     if not _is_clean(company):
         company = None
     if not _is_clean(title):
@@ -606,7 +606,7 @@ def _ddg_description(title: str, company: str) -> str | None:
             results = DDGS().text(f"{title} {company} job description", max_results=5)
         if not results:
             return None
-        # Concatenate snippets — enough keywords for scoring
+        # Concatenate snippets, enough keywords for scoring
         snippets = ' '.join(r.get('body', '') for r in results if r.get('body'))
         return snippets[:3000] if snippets.strip() else None
     except Exception:
@@ -691,7 +691,7 @@ def _scan_account(gmail_user, gmail_password, days_back=90):
     Returns list of (title, company, date, message_id, subject, sender, status).
     """
     if not gmail_user or not gmail_password:
-        logger.warning(f"[Tracker] No credentials for {gmail_user} — skipping")
+        logger.warning(f"[Tracker] No credentials for {gmail_user}, skipping")
         return []
 
     logger.info(f"[Tracker] Connecting to {gmail_user}...")

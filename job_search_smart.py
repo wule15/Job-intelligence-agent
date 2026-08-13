@@ -49,37 +49,27 @@ class SmartJobSearcher:
         self.skills_data = self.load_skills()
 
     def load_skills(self):
-        """Load user's extracted skills, auto-refreshing if cache is missing or stale."""
-        cache_path = Path(Config.KEYWORDS_CACHE)
+        """Load the user's skills from the master CV variants, the SAME source
+        the scorer uses (core.cv_variants.load_variants).
 
-        # Auto-refresh if cache is missing or older than 7 days
-        needs_refresh = not cache_path.exists()
-        if not needs_refresh:
-            import time
-            age_days = (time.time() - cache_path.stat().st_mtime) / 86400
-            if age_days > 7:
-                logger.info(f"[Skills] Cache is {age_days:.1f} days old — refreshing")
-                needs_refresh = True
-
-        if needs_refresh:
-            try:
-                from core.keyword_extractor import KeywordExtractor
-                print("[*] Skills cache missing or stale — re-extracting from CVs...")
-                extractor = KeywordExtractor()
-                extractor.extract_all_cvs()
-                print("[+] Skills cache refreshed")
-            except Exception as e:
-                logger.warning(f"[Skills] Auto-refresh failed: {e} — continuing with empty skills")
-                return {}
-
+        The old path re-extracted skills from PDF/DOCX files in resumes/ and
+        cached them to keywords.json. The CV redesign moved skills into
+        master-cv.yaml's variants: section and switched the scorer over, but not
+        this query builder, so it kept refreshing an empty PDF cache and returned
+        no skills. That silently emptied the search queries and starved every
+        query-driven source (Adzuna, Jooble, Arbeitnow, Himalayas, JSearch,
+        LinkedIn). Reading the variants directly keeps this in lockstep with the
+        scorer and cannot drift out of sync again."""
         try:
-            with open(Config.KEYWORDS_CACHE, 'r') as f:
-                data = json.load(f)
+            from core.cv_variants import load_variants
+            data = load_variants(Config.MASTER_CV_PATH)
             if not data.get('cvs'):
-                logger.warning("[Skills] Cache exists but has no CV data — run keyword_extractor.py manually")
+                logger.warning(
+                    f"[Skills] No variants found in {Config.MASTER_CV_PATH}; "
+                    f"search queries will be empty. Check the variants: section.")
             return data
         except Exception as e:
-            logger.error(f"Error loading skills: {e}")
+            logger.error(f"Error loading skills from variants: {e}")
             return {}
 
     def extract_top_skills(self, limit=10):
@@ -129,12 +119,12 @@ class SmartJobSearcher:
 
     def build_search_queries(self):
         """Build search queries directly from extracted CV skills."""
-        top_skills = self.extract_top_skills(200)   # pull all skills — no arbitrary cap
+        top_skills = self.extract_top_skills(200)  # pull all skills, no arbitrary cap
         _, key_domains = self.get_job_categories()
 
         queries = set()
 
-        # 1. Skill-based queries — filter noise aggressively, generate up to 20 queries
+        # 1. Skill-based queries, filter noise aggressively, generate up to 20 queries
         noise_exact = {
             # languages / nationalities
             'english', 'german', 'serbian', 'native', 'fluent', 'basic',
@@ -148,11 +138,11 @@ class SmartJobSearcher:
             # single-letter or abbreviations too short to be useful
             'ms', 'iso', 'api', 'erp', 'crm', 'b2b', 'sop', 'kpi', 'roi',
             'ppt', 'cad', 'ppt', 'bom', 'btu', 'fea', 'p&id',
-            # already covered by combo queries below — skip to avoid duplicates
+            # already covered by combo queries below, skip to avoid duplicates
             'sales', 'sales engineering', 'sales development',
         }
         noise_partial = [
-            # partial-match blocklist — skip if skill contains any of these
+            # partial-match blocklist, skip if skill contains any of these
             'microsoft', 'office suite', 'ms word', 'ms excel', 'ms powerpoint',
         ]
         skill_queries = 0
@@ -170,7 +160,7 @@ class SmartJobSearcher:
             skill_queries += 1
 
         # 2. Specific skill-combo queries based on CV tracks
-        # These target your unique intersection of skills — much more precise than generic terms
+        # These target your unique intersection of skills, much more precise than generic terms
         # Check top skills for engineering/content tracks, but also scan ALL CV skills so
         # newer CVs (e.g. AppointmentSetter) with lower experience years aren't silently ignored.
         skill_lower = [s.lower() for s in top_skills]
@@ -187,7 +177,7 @@ class SmartJobSearcher:
         has_ai       = any('ai' in s or 'automation' in s or 'claude' in s or 'chatgpt' in s for s in skill_lower)
         has_sales    = any('sales' in s for s in skill_lower)
         has_domain   = any('engineering' in d.lower() or 'mechanical' in d.lower() for d in key_domains)
-        # Outbound track — check all CV skills so AppointmentSetter CV is always detected
+        # Outbound track, check all CV skills so AppointmentSetter CV is always detected
         has_outbound = any(
             'outbound' in s or 'prospecting' in s or 'hubspot' in s
             or 'appointment' in s or 'lead qualif' in s or 'cold outreach' in s
@@ -217,7 +207,7 @@ class SmartJobSearcher:
             queries.add("remote sales engineer fluid systems")
 
         if has_ai and has_content:
-            # Only add AI queries when paired with content — avoids pulling pure programming jobs
+            # Only add AI queries when paired with content, avoids pulling pure programming jobs
             queries.add("remote AI content operations")
 
         if has_outbound or has_sales:
@@ -251,7 +241,7 @@ class SmartJobSearcher:
         except Exception as e:
             logger.warning(f"Could not cleanup database: {e}")
 
-        # Build intelligent queries — sorted by specificity (longest first)
+        # Build intelligent queries, sorted by specificity (longest first)
         queries = self.build_search_queries()
         top_keywords = self.extract_top_skills(limit=15)
 
@@ -284,14 +274,14 @@ class SmartJobSearcher:
             r.jobs = self.ats.search_all()
         results.append(r)
 
-        # 2. JSearch — specific queries only, paid, full descriptions
+        # 2. JSearch, specific queries only, paid, full descriptions
         print(f"\n[*] Trying JSearch ({len(specific_queries)} specific queries)...")
         with source_health.track('JSearch', queries=len(specific_queries)) as r:
             for query in specific_queries:
                 r.jobs.extend(self.jsearch.search_jobs(query, num_pages=2))
         results.append(r)
 
-        # 3. Free aggregators — all queries, no quota
+        # 3. Free aggregators, all queries, no quota
         print(f"\n[*] Searching free sources...")
         with source_health.track('Free aggregators', queries=len(queries)) as r:
             r.jobs = self.free_search.search_all(queries=queries, keywords=top_keywords)
@@ -304,20 +294,20 @@ class SmartJobSearcher:
             r.jobs = self.linkedin.search_all(specific_queries[:5], pages=2)
         results.append(r)
 
-        # 5. SerpAPI — Google Jobs. Needs SERPAPI_KEY, skipped without one.
+        # 5. SerpAPI, Google Jobs. Needs SERPAPI_KEY, skipped without one.
         print(f"\n[*] Searching Google Jobs via SerpAPI...")
         with source_health.track('SerpAPI', queries=len(specific_queries[:5])) as r:
             r.jobs = self.serpapi.search_all(specific_queries[:5])
         results.append(r)
 
-        # 6. Apify — LinkedIn and Indeed with full descriptions, metered
+        # 6. Apify, LinkedIn and Indeed with full descriptions, metered
         print(f"\n[*] Searching via Apify...")
         apify_queries = specific_queries[:3]
         with source_health.track('Apify', queries=len(apify_queries)) as r:
             r.jobs = self.apify.search_all(apify_queries)
         results.append(r)
 
-        # 7. DuckDuckGo — scrapes public job board pages, throttled
+        # 7. DuckDuckGo, scrapes public job board pages, throttled
         print(f"\n[*] Searching via DuckDuckGo...")
         with source_health.track('DuckDuckGo', queries=len(broad_queries[:10])) as r:
             r.jobs = self.ddg.search_all(broad_queries[:10])

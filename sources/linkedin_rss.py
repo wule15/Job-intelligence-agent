@@ -62,9 +62,9 @@ def search_linkedin_rss(query, max_results=25):
         try:
             root = ET.fromstring(resp.content)
         except ET.ParseError:
-            # LinkedIn sometimes returns HTML when blocked — detect & skip
+            # LinkedIn sometimes returns HTML when blocked, detect & skip
             if b'<html' in resp.content[:200].lower():
-                logger.warning("[LinkedIn RSS] Got HTML instead of RSS — may be rate-limited")
+                logger.warning("[LinkedIn RSS] Got HTML instead of RSS, may be rate-limited")
             else:
                 logger.warning("[LinkedIn RSS] XML parse error")
             return []
@@ -159,4 +159,4 @@ if __name__ == '__main__':
     jobs = searcher.search_all(['sales engineer remote', 'mechanical engineer remote'])
     print(f"Found {len(jobs)} jobs")
     for j in jobs[:5]:
-        print(f"  {j['title']} @ {j['company']} — {j['link'][:60]}")
+        print(f"  {j['title']} @ {j['company']}, {j['link'][:60]}")

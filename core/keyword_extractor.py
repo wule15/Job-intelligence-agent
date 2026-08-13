@@ -63,7 +63,7 @@ class KeywordExtractor:
         # Use full CV text (up to 12000 chars) so skills buried in experience sections are captured
         safe_text = text[:12000].replace('\\', '\\\\').replace('"', '\\"').replace('\n', ' ')
 
-        prompt = f"""Extract ALL skills and tools from this CV. Include both hard skills (software, tools, technologies, methodologies) and transferable skills (sales, project management, etc). Use the exact terms a job posting would use — prefer common/generic names over proprietary ones where applicable (e.g. "CFD" not just "Star-CCM+"). Return ONLY valid JSON (no other text).
+        prompt = f"""Extract ALL skills and tools from this CV. Include both hard skills (software, tools, technologies, methodologies) and transferable skills (sales, project management, etc). Use the exact terms a job posting would use, prefer common/generic names over proprietary ones where applicable (e.g. "CFD" not just "Star-CCM+"). Return ONLY valid JSON (no other text).
 
 {{
   "skills": {{"Skill Name": years_of_experience}},

@@ -115,6 +115,55 @@ class TestApplicantTrackingSystems:
             assert 'gh_src' not in job['link']
 
 
+class TestSuccessFactors:
+    """
+    SuccessFactors has no public JSON API, so its adapter parses the Google
+    Jobs RSS feed at /sitemap.xml. _sf_jobs_from_stream is the seam, exercised
+    on a fixed feed with no request.
+    """
+
+    FEED = b'''<?xml version="1.0" encoding="UTF-8" ?>
+<rss version="2.0" xmlns:g="http://base.google.com/ns/1.0"><channel>
+<title>Careers feed title</title>
+<item><title>Sales Engineer (Berlin, DE)</title>
+<description><![CDATA[&lt;p&gt;Kv &lt;b&gt;valve sizing&lt;/b&gt; and flow control.&lt;/p&gt;]]></description>
+<link>https://jobs.example.com/job/123/?utm_source=x</link>
+<g:location>Berlin, DE</g:location><g:employer>Acme</g:employer></item>
+<item><title>Process Engineer (Prague, CZ)</title>
+<description><![CDATA[Piping and instrumentation.]]></description>
+<link>https://jobs.example.com/job/456/</link><g:location>Prague, CZ</g:location></item>
+</channel></rss>'''
+
+    def _parse(self, max_jobs=None):
+        import io
+        return ats._sf_jobs_from_stream(io.BytesIO(self.FEED), 'Acme', 'jobs.example.com', max_jobs)
+
+    def test_parses_the_feed_into_our_record(self):
+        jobs = self._parse()
+        assert len(jobs) == 2, 'both feed items should parse'
+        for job in jobs:
+            missing = REQUIRED_FIELDS - set(job)
+            assert not missing, f'job is missing {missing}'
+            assert job['source'] == 'SuccessFactors'
+            assert job['company'] == 'Acme'
+            assert job['title']
+
+    def test_description_is_plain_text_and_location_is_read(self):
+        job = self._parse()[0]
+        assert '<' not in job['description'] and '&lt;' not in job['description']
+        assert 'valve sizing' in job['description'], 'CDATA HTML should unescape then strip'
+        assert job['location'] == 'Berlin, DE'
+
+    def test_links_are_canonicalised(self):
+        assert 'utm_' not in self._parse()[0]['link']
+
+    def test_max_jobs_is_honoured(self):
+        assert len(self._parse(max_jobs=1)) == 1
+
+    def test_successfactors_is_a_registered_fetcher(self):
+        assert ats.FETCHERS.get('successfactors') is ats.fetch_successfactors
+
+
 class TestFreeBoards:
     """Same approach for the keyless aggregators."""
 
