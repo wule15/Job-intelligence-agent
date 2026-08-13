@@ -29,7 +29,7 @@ class Database:
         self.connection.execute("PRAGMA synchronous = NORMAL;")
 
     def _run_migrations(self):
-        """Run schema migrations on every startup — safe to call repeatedly."""
+        """Run schema migrations on every startup, safe to call repeatedly."""
         cursor = self.connection.cursor()
         try:
             # Ensure core tables exist (idempotent)

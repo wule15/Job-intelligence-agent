@@ -58,6 +58,11 @@ keywords.json
 config/*
 !config/companies.example.json
 
+# The running code reads its config from core/config (PROJECT_ROOT is the
+# core package, see core/config.py). The real target-company list lives
+# there and is private, same as the top-level one above.
+core/config/companies.json
+
 # ---------------------------------------------------------------------------
 # Python
 # ---------------------------------------------------------------------------

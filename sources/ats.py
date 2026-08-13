@@ -41,6 +41,10 @@ LEVER_URL = 'https://api.lever.co/v0/postings/{slug}?mode=json'
 ASHBY_URL = 'https://api.ashbyhq.com/posting-api/job-board/{slug}?includeCompensation=true'
 SMARTRECRUITERS_URL = 'https://api.smartrecruiters.com/v1/companies/{slug}/postings?limit={limit}&offset={offset}'
 WORKDAY_URL = 'https://{tenant}.wd{wd}.myworkdayjobs.com/wday/cxs/{tenant}/{site}/jobs'
+SUCCESSFACTORS_URL = 'https://{host}/sitemap.xml'
+
+# The Google Jobs RSS namespace SuccessFactors uses for its structured fields.
+SF_GOOGLE_NS = '{http://base.google.com/ns/1.0}'
 
 # Page size for the vendors that paginate.
 PAGE_SIZE = 100
@@ -246,12 +250,83 @@ def fetch_workday(slug, company_name=None, max_jobs=300, wd='5', site='External'
     return jobs
 
 
+def _sf_jobs_from_stream(fileobj, company_name, slug, max_jobs):
+    """
+    Parse a SuccessFactors /sitemap.xml RSS feed into job dicts.
+
+    Split out from the fetch so it can be tested on a fixed feed with no
+    network. Streams with iterparse and stops at max_jobs, so a large feed
+    (SAP's runs ~1000 jobs and 15 MB) is neither fully buffered nor fully
+    downloaded once the cap is reached. Each item carries its full description,
+    so no follow-up detail fetch is needed.
+    """
+    import xml.etree.ElementTree as ET
+
+    def local(tag):
+        return tag.rsplit('}', 1)[-1]
+
+    jobs = []
+    for _event, elem in ET.iterparse(fileobj, events=('end',)):
+        if local(elem.tag) != 'item':
+            continue
+        title = (elem.findtext('title') or '').strip()
+        link = (elem.findtext('link') or '').strip()
+        location = (elem.findtext(SF_GOOGLE_NS + 'location')
+                    or elem.findtext('location') or 'Not stated')
+        jobs.append({
+            'title': title,
+            'company': company_name or slug,
+            'description': _strip_html(elem.findtext('description') or ''),
+            'link': canonical_url(link),
+            'location': location,
+            'salary': None,
+            'source': 'SuccessFactors',
+            # The feed carries an expiration date, not a post date, so there is
+            # no reliable posted date to record.
+            'date_posted': None,
+        })
+        elem.clear()
+        if max_jobs and len(jobs) >= max_jobs:
+            break
+    return jobs
+
+
+def fetch_successfactors(slug, company_name=None, max_jobs=300):
+    """
+    SAP SuccessFactors career sites (Career Site Builder).
+
+    SuccessFactors has no clean public jobs JSON: the OData surface and the
+    /services/recruiting endpoint are OAuth gated (401). What Career Site
+    Builder does publish, unauthenticated, is a Google Jobs RSS feed at
+    /sitemap.xml. This reads that.
+
+    slug is the career-site host, not a company token, e.g. "jobs.sap.com".
+    A site that is not Career Site Builder, or has the feed disabled, returns
+    no feed and is reported by name like any other failing board.
+    """
+    response = session.get(
+        SUCCESSFACTORS_URL.format(host=slug),
+        headers=HEADERS, timeout=TIMEOUT, stream=True)
+    if response.status_code == 404:
+        raise LookupError('no /sitemap.xml feed, not a Career Site Builder host')
+    if response.status_code != 200:
+        raise RuntimeError(f'HTTP {response.status_code}')
+
+    # Ask urllib3 to gunzip transparently so iterparse sees XML, not gzip bytes.
+    response.raw.decode_content = True
+    try:
+        return _sf_jobs_from_stream(response.raw, company_name, slug, max_jobs)
+    finally:
+        response.close()
+
+
 FETCHERS = {
     'greenhouse': fetch_greenhouse,
     'lever': fetch_lever,
     'ashby': fetch_ashby,
     'smartrecruiters': fetch_smartrecruiters,
     'workday': fetch_workday,
+    'successfactors': fetch_successfactors,
 }
 
 # Sources whose list endpoint returns titles without descriptions. Scoring a

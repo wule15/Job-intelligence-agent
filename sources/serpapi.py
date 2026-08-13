@@ -33,7 +33,7 @@ def search_google_jobs(query, location='Remote', num_results=10):
     """
     api_key = os.getenv('SERPAPI_KEY') or getattr(Config, 'SERPAPI_KEY', None)
     if not api_key:
-        logger.warning("[SerpAPI] SERPAPI_KEY not set — skipping Google Jobs")
+        logger.warning("[SerpAPI] SERPAPI_KEY not set, skipping Google Jobs")
         return []
 
     params = {
@@ -67,7 +67,7 @@ def search_google_jobs(query, location='Remote', num_results=10):
             if detected.get('salary'):
                 salary = detected['salary']
 
-            # Apply link — prefer direct link
+            # Apply link, prefer direct link
             apply_link = ''
             for opt in item.get('apply_options', []):
                 apply_link = opt.get('link', '')
@@ -119,7 +119,7 @@ class SerpAPIJobSearcher:
         for q in queries:
             jobs = search_google_jobs(q)
             if not jobs and not os.getenv('SERPAPI_KEY'):
-                break  # No key configured — stop trying
+                break  # No key configured, stop trying
             for job in jobs:
                 key = (job['title'].lower(), job['company'].lower())
                 if key not in seen:

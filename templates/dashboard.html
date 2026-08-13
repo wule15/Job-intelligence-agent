@@ -402,7 +402,7 @@
                     <div>
                         <h2 class="text-white font-bold text-lg">
                             Remote Jobs
-                            {% if selected_industry %}<span class="text-purple-400"> — {{ selected_industry }}</span>{% endif %}
+                            {% if selected_industry %}<span class="text-purple-400">, {{ selected_industry }}</span>{% endif %}
                             {% if selected_date %}<span class="text-gray-500 font-normal text-base"> · {{ selected_date }}</span>{% endif %}
                         </h2>
                         <div class="flex items-center gap-6 mt-2">
@@ -810,7 +810,7 @@
                             <div class="flex-1 min-w-0">
                                 <p class="text-white text-sm font-semibold truncate">${j.title}</p>
                                 <p class="text-purple-400 text-xs">${j.company}</p>
-                                <p class="text-gray-500 text-xs mt-0.5">📄 ${j.cv || '—'}</p>
+                                <p class="text-gray-500 text-xs mt-0.5">📄 ${j.cv || '-'}</p>
                             </div>
                             <div class="flex items-center gap-2 flex-shrink-0">
                                 <span class="text-xs font-bold px-2 py-1 rounded ${j.score >= 7 ? 'score-high' : j.score >= 4 ? 'score-mid' : 'score-low'}">${j.score}%</span>

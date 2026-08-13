@@ -82,11 +82,11 @@ _PITCH_STYLES = {
 def _pitch_style_for_cv(cv_hint: str) -> str:
     """Return the appropriate pitch style string for a given CV name hint."""
     if not cv_hint:
-        return "Professional and concise — highlight the most relevant skills for this specific role."
+        return "Professional and concise, highlight the most relevant skills for this specific role."
     # Strip the configured filename prefix so the remainder matches a style key
     key = (format_cv_label(cv_hint) or '').replace(' ', '_').strip()
     return _PITCH_STYLES.get(key, (
-        "Professional and concise — highlight the most relevant skills for this specific role."
+        "Professional and concise, highlight the most relevant skills for this specific role."
     ))
 
 

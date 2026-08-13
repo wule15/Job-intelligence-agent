@@ -6,7 +6,7 @@ How it works: when checking whether skill X appears in a job description,
 we also check if any synonym for X appears. This bridges the vocabulary gap
 between how CVs are written and how job ads are written.
 
-Add new entries freely — the more the better.
+Add new entries freely, the more the better.
 """
 
 # Each key is a canonical skill term (lowercase).

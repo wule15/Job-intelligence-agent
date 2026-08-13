@@ -117,6 +117,103 @@ class TestQuotas:
         assert telegram_sender.get_unsent_jobs() == []
 
 
+class TestSourceDemotion:
+    """Indeed and JSearch are held back to a last-resort fill."""
+
+    def test_indeed_does_not_appear_when_quality_jobs_exist(self, db):
+        for i in range(20):
+            add(db, f'Quality {i}', f'GoodCo {i}', 70.0, 'Jobicy')
+        for i in range(10):
+            add(db, f'Indeed Role {i}', f'IndeedCo {i}', 95.0, 'Apify / Indeed')
+        jobs = telegram_sender.get_unsent_jobs(limit=10)
+        assert jobs, 'expected a full digest of quality jobs'
+        assert not any('indeed' in (j[6] or '').lower() for j in jobs)
+
+    def test_jsearch_is_demoted_too(self, db):
+        for i in range(20):
+            add(db, f'Quality {i}', f'GoodCo {i}', 70.0, 'RemoteOK')
+        for i in range(10):
+            add(db, f'JS Role {i}', f'JSCo {i}', 99.0, 'JSearch')
+        jobs = telegram_sender.get_unsent_jobs(limit=10)
+        assert not any('jsearch' in (j[6] or '').lower() for j in jobs)
+
+    def test_indeed_fills_only_when_nothing_better(self, db):
+        for i in range(5):
+            add(db, f'Indeed Role {i}', f'IndeedCo {i}', 60.0, 'Apify / Indeed')
+        jobs = telegram_sender.get_unsent_jobs(limit=10)
+        assert jobs and all('indeed' in (j[6] or '').lower() for j in jobs)
+
+
+class TestLiveness:
+    """The expired-link check on aggregator jobs in the main digest."""
+
+    def test_expired_aggregator_job_is_dropped(self, db):
+        add(db, 'Live Role', 'GoodCo', 70.0, 'Jobicy')
+        add(db, 'Dead Role', 'DeadCo', 90.0, 'Jobicy')
+        dead = {'https://example.com/Dead Role/DeadCo'}
+        jobs = telegram_sender.get_unsent_jobs(limit=10, is_live=lambda url: url not in dead)
+        titles = [j[1] for j in jobs]
+        assert 'Live Role' in titles and 'Dead Role' not in titles
+
+    def test_ats_jobs_bypass_the_liveness_check(self, db):
+        add(db, 'Board Role', 'Flowserve', 70.0, 'Workday')
+        # is_live rejects everything; an ATS job must still come through.
+        jobs = telegram_sender.get_unsent_jobs(limit=10, is_live=lambda url: False)
+        assert any(j[1] == 'Board Role' for j in jobs)
+
+    def test_no_check_means_no_network(self, db):
+        # Default is_live=None must never call out. A callable that explodes if
+        # invoked proves the default path does not touch it.
+        def boom(url):
+            raise AssertionError('liveness check ran when it should not have')
+        add(db, 'Role', 'Co', 70.0, 'Jobicy')
+        telegram_sender.get_unsent_jobs(limit=10)  # no is_live -> boom never wired
+        # And when passed, it IS used (guards against a silently ignored param).
+        import pytest
+        with pytest.raises(AssertionError):
+            telegram_sender.get_unsent_jobs(limit=10, is_live=boom)
+
+
+class TestDirectDigest:
+    """The separate direct-from-company digest, ATS boards only."""
+
+    def test_only_ats_sources_appear(self, db):
+        add(db, 'Board Role', 'Flowserve', 80.0, 'Workday')
+        add(db, 'Board Role 2', 'Anthropic', 80.0, 'Greenhouse')
+        add(db, 'Aggregator Role', 'Agency', 90.0, 'Free')
+        jobs = telegram_sender.get_direct_jobs()
+        assert jobs, 'expected the two ATS jobs'
+        assert all(j[6] in telegram_sender.ATS_SOURCES for j in jobs)
+        assert not any(j[2] == 'Agency' for j in jobs)
+
+    def test_score_gate_applies(self, db):
+        add(db, 'Weak Board Role', 'Flowserve', 5.0, 'Workday')
+        assert telegram_sender.get_direct_jobs() == []
+
+    def test_per_company_cap(self, db):
+        for i in range(6):
+            add(db, f'Flowserve Role {i}', 'Flowserve', 70.0, 'Workday')
+        jobs = telegram_sender.get_direct_jobs()
+        assert len(jobs) <= telegram_sender.MAX_PER_COMPANY
+
+    def test_respects_the_limit(self, db):
+        for i in range(40):
+            add(db, f'Role {i}', f'Manufacturer {i}', 70.0, 'Workday')
+        assert len(telegram_sender.get_direct_jobs()) <= telegram_sender.DIRECT_DIGEST_SIZE
+
+    def test_excludes_already_sent(self, db):
+        jid = add(db, 'Board Role', 'Flowserve', 80.0, 'Workday')
+        telegram_sender.mark_jobs_sent([jid])
+        assert telegram_sender.get_direct_jobs() == []
+
+    def test_empty_direct_digest_sends_nothing(self):
+        message, ids = telegram_sender.format_direct_digest([])
+        assert ids == [] and message == ''
+
+    def test_empty_database_is_safe(self, db):
+        assert telegram_sender.get_direct_jobs() == []
+
+
 class TestTitlePrescreen:
     """The screen deciding which title-only jobs are worth a description fetch."""
 
