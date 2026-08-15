@@ -8,10 +8,8 @@ import json
 from pathlib import Path
 from sources.free_boards import FreeJobSearcher
 from sources.jsearch import JSearchJobScraper
-from sources.linkedin_rss import LinkedInRSSSearcher
 from sources.serpapi import SerpAPIJobSearcher
 from sources.gmail_drafts import GmailDraftJobExtractor
-from sources.aggregators import MultiConnectorJobSearch
 from sources.duckduckgo import DDGJobSearcher
 from sources.apify import ApifyJobSearcher
 from sources.linkedin import LinkedInJobSearcher
@@ -35,10 +33,8 @@ class SmartJobSearcher:
     def __init__(self):
         self.free_search = FreeJobSearcher()
         self.jsearch = JSearchJobScraper()
-        self.linkedin_rss = LinkedInRSSSearcher()
         self.serpapi = SerpAPIJobSearcher()
         self.gmail = GmailDraftJobExtractor()
-        self.connectors = MultiConnectorJobSearch()
         self.ddg   = DDGJobSearcher()
         self.apify = ApifyJobSearcher()
         self.linkedin = LinkedInJobSearcher()
@@ -406,7 +402,8 @@ class SmartJobSearcher:
                     salary=job.get('salary'),
                     source=job.get('source'),
                     relevance_score=job.get('relevance_score', 0),
-                    best_cv=job.get('best_cv')
+                    best_cv=job.get('best_cv'),
+                    scam_risk=job.get('scam_risk', False),
                 )
                 # Mark link as seen so we don't re-process old re-listings
                 if job.get('link'):

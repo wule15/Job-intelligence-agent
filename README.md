@@ -8,9 +8,9 @@ Reads company careers pages and job boards every morning, scores what it finds a
 
 ```
 SOURCES
-  Company careers pages   Greenhouse, Lever, Ashby, SmartRecruiters, Workday
-                          Read directly from each employer's own board.
-                          No key, no quota, full job descriptions.
+  Company careers pages   Greenhouse, Lever, Ashby, SmartRecruiters, Workday,
+                          SuccessFactors. Read directly from each employer's own
+                          board. No key, no quota, full job descriptions.
   Aggregators             RemoteOK, Remotive, Arbeitnow, The Muse, Jobicy,
                           WeWorkRemotely, Himalayas, Adzuna, Jooble
   LinkedIn                Public guest endpoint, no authentication
@@ -46,6 +46,9 @@ SCORE
 FILTER
   Dealbreaker keywords, geography restrictions, non-English titles,
   minimum score. Every rejection is counted by reason and reported.
+  Scam defence: known fake boards and free-hosting apply links are dropped
+  outright; softer scam signals (apply-by-WhatsApp, pay-to-work fees) heavily
+  downrank the listing and flag it so the digest warns before you apply.
       |
       v
 STORE
@@ -54,9 +57,11 @@ STORE
       |
       v
 DELIVER
-  Telegram, 15 a day: 5 from company boards, 5 from aggregators,
-  5 wildcard, at most 2 per employer. Every slot is score-gated.
-  Cover letters for the top matches through the Claude API.
+  Two Telegram messages. A main digest (company boards, then quality
+  aggregators, then wildcard, at most 2 per employer, every slot score-gated),
+  and a separate "Direct company openings" shortlist drawn only from the
+  employer boards. Indeed and JSearch are demoted to a last-resort fill so they
+  cannot crowd out the better sources. Expired links are dropped before sending.
       |
       v
 TRACK
@@ -77,7 +82,7 @@ I was applying to jobs by hand and losing good listings to the volume of bad one
 
 Only what is in the code.
 
-**Reads employer careers pages directly.** Five applicant tracking systems: Greenhouse, Lever, Ashby, SmartRecruiters and Workday. You list the companies you want in a config file and it checks their real careers pages daily. No API key, no quota, and the posting is the company's own rather than an aggregator's copy of it.
+**Reads employer careers pages directly.** Six applicant tracking systems: Greenhouse, Lever, Ashby, SmartRecruiters, Workday and SuccessFactors. You list the companies you want in a config file and it checks their real careers pages daily. No API key, no quota, and the posting is the company's own rather than an aggregator's copy of it. SuccessFactors has no open JSON API, so that adapter reads the public Google Jobs RSS feed a Career Site Builder site publishes at `HOST/sitemap.xml`.
 
 **Survives a dead source.** Every source runs inside a wrapper that times it, catches whatever it throws, and records the outcome. One source failing cannot end the run.
 
@@ -89,7 +94,11 @@ Only what is in the code.
 
 **Scores per CV, not once.** For each CV it counts how many of that CV's skills appear in the job text, divided by a denominator capped at 15, because a job description will never mention all fifty. The best-scoring CV is stored with the job so the digest can say which one to send.
 
-**Composes a digest by quota.** Guaranteed slots for company boards, aggregators and wildcard, capped at two per employer. A quota is a ceiling and never a floor: if only two board jobs clear the score bar, you get two, and the run says why the rest went unfilled.
+**Composes a digest by quota.** Guaranteed slots for company boards, aggregators and wildcard, capped at two per employer. A quota is a ceiling and never a floor: if only two board jobs clear the score bar, you get two, and the run says why the rest went unfilled. Indeed and JSearch are demoted to a last-resort fill so a noisy aggregator cannot take over the day, and a second message carries a shortlist drawn only from the employer boards.
+
+**Screens for scams.** Known fake boards and free-hosting apply links are dropped before scoring. Softer signals a real employer never posts, apply-by-WhatsApp or Telegram, pay-to-work fees, reshipping fronts, heavily downrank the listing and flag it, and the flag is stored so it becomes a visible warning in the digest.
+
+**Refuses internal addresses when checking links.** Before a scraped apply link is fetched to see if it is still live, its target is checked, and a private, loopback or cloud-metadata address is refused, on every redirect hop. A stranger's listing cannot point the link checker at the local network.
 
 **Generates cover letters** through the Claude API for the top matches, and saves them as DOCX.
 
@@ -187,7 +196,7 @@ Python 3.11 or newer, no framework.
 | Tests | pytest |
 | Normalisation | standard library only, `re` and `urllib.parse` |
 
-190 tests, covering scoring, filtering, deduplication, storage, source health, digest composition, retry policy and three regressions that each cost real results. Every test runs against fixtures and temporary files. No test touches a real database or makes a network call.
+241 tests, covering scoring, filtering, deduplication, storage, source health, digest composition, the scam screen, the SSRF guard on link checking, retry policy and three regressions that each cost real results. Every test runs against fixtures and temporary files. No test touches a real database or makes a network call.
 
 The connectors have tests now. Not by mocking ten third-party APIs, which is a larger job than this project justifies, but by capturing one real response per source, trimming it to two jobs, and asserting on the record the parser produces. That covers the half of a connector that breaks silently: the mapping from somebody else's JSON shape into ours.
 
@@ -239,19 +248,30 @@ jobs.lever.co/SLUG                 ->  "ats": "lever"
 jobs.ashbyhq.com/SLUG              ->  "ats": "ashby"
 jobs.smartrecruiters.com/SLUG      ->  "ats": "smartrecruiters"
 TENANT.wdN.myworkdayjobs.com/SITE  ->  "ats": "workday", plus "wd" and "site"
+career-site host (e.g. jobs.acme.com) -> "ats": "successfactors", "slug": host
 ```
 
 Verify a slug before trusting it. Searching the web for a company's Workday URL turns up plenty of live boards belonging to somebody else, and a wrong tenant returns 200 with thousands of jobs that look completely normal until you read them.
 
-**4. Add your CVs.**
+**4. Write your CV profile.**
 
-Put them in `resumes/` as PDFs. Skills are extracted from them on first run and refreshed weekly. This directory is gitignored.
+```bash
+cp master-cv.example.yaml master-cv.yaml
+```
+
+Fill in the `variants:` section: one entry per version of yourself you want to
+match against (for example a sales-engineering CV and a technical-content CV),
+each with its skills. The scorer and the query builder both read this file
+directly. It is gitignored and it is required: with no `master-cv.yaml` the
+query builder produces no queries and every search-driven source is starved, so
+do not skip it. `resumes/` (the source PDFs) is optional and only feeds a legacy
+fallback.
 
 **5. Check it works.**
 
 ```bash
 python validate_system.py     # configuration and connectivity
-pytest                        # 190 tests, no network
+pytest                        # 241 tests, no network
 python job_search_smart.py    # one real run
 ```
 
@@ -301,7 +321,7 @@ python dashboard.py           # http://localhost:5000
 
 ![Daily digest in Telegram](docs/telegram-digest.png)
 
-Fifteen a day, capped at two per employer, each one carrying the score and which CV scored it.
+Up to ten in the main digest plus a separate direct-from-company shortlist, capped at two per employer, each one carrying the score and which CV scored it.
 
 The percentages are a ranking device, not a probability. A score is the count of that CV's skill terms appearing in the job text over a denominator capped at 15, so 43 percent means roughly six or seven terms matched, not that the job is a 43 percent fit. It exists to order the list and to fill the quota, and the known weaknesses section below is honest about what it cannot see.
 

@@ -115,6 +115,21 @@ class TestApplicantTrackingSystems:
             assert 'gh_src' not in job['link']
 
 
+class TestWorkdayDetailUrl:
+    """The detail fetch must hit the cxs JSON endpoint, not the human page,
+    which returns JSON without a jobPostingInfo body (the bug this fixes)."""
+
+    def test_human_url_is_rewritten_to_cxs(self):
+        link = 'https://flowserve.wd1.myworkdayjobs.com/applied/job/Antofagasta/Op_R-1'
+        assert ats._workday_cxs_url(link) == (
+            'https://flowserve.wd1.myworkdayjobs.com/wday/cxs/flowserve/applied/job/Antofagasta/Op_R-1')
+
+    def test_tenant_is_taken_from_the_subdomain(self):
+        link = 'https://sulzer.wd502.myworkdayjobs.com/SulzerJobs/job/X/Y_R2'
+        assert ats._workday_cxs_url(link) == (
+            'https://sulzer.wd502.myworkdayjobs.com/wday/cxs/sulzer/SulzerJobs/job/X/Y_R2')
+
+
 class TestSuccessFactors:
     """
     SuccessFactors has no public JSON API, so its adapter parses the Google

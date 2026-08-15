@@ -117,6 +117,25 @@ class TestQuotas:
         assert telegram_sender.get_unsent_jobs() == []
 
 
+class TestSSRFGuard:
+    """The liveness check refuses to fetch private/internal addresses, so a
+    scraped apply link cannot be used to probe the local network."""
+
+    def test_internal_targets_are_refused(self):
+        for u in ('http://127.0.0.1/x', 'http://10.0.0.1/x', 'http://192.168.1.1/x',
+                  'http://169.254.169.254/latest/meta-data', 'ftp://8.8.8.8/x', 'not a url'):
+            assert telegram_sender._is_internal_url(u), u
+
+    def test_public_ip_is_allowed(self):
+        assert not telegram_sender._is_internal_url('http://8.8.8.8/x')
+
+    def test_check_link_live_refuses_internal_without_fetching(self, monkeypatch):
+        def boom(*a, **k):
+            raise AssertionError('an internal URL must never be fetched')
+        monkeypatch.setattr(telegram_sender.requests, 'get', boom)
+        assert telegram_sender.check_link_live('http://127.0.0.1/ssrf-probe-xyz') is False
+
+
 class TestSourceDemotion:
     """Indeed and JSearch are held back to a last-resort fill."""
 

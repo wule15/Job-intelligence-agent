@@ -19,7 +19,9 @@ the careers page URL:
 """
 
 import json
+import time
 from pathlib import Path
+from urllib.parse import urlparse
 
 from core.config import Config
 from core.http_client import build_session
@@ -35,6 +37,14 @@ HEADERS = {'User-Agent': 'job-intelligence-agent (+https://github.com/)'}
 # to every board. Twenty boards on one run means a lot of reconnecting
 # otherwise.
 session = build_session(user_agent=HEADERS['User-Agent'])
+
+# Detail (per-job) fetches get their own non-retrying session and a short
+# timeout. Retries multiply the cost of one hung endpoint, and enrichment is
+# best-effort, so a slow detail page fails fast rather than blocking the run.
+# This is the ATS-side version of the timeout that was added to the Apify call.
+DETAIL_TIMEOUT = (4, 8)      # (connect, read) seconds
+DETAIL_BUDGET_SECS = 90      # cumulative wall-clock ceiling for the whole enrich pass
+detail_session = build_session(attempts=0, user_agent=HEADERS['User-Agent'])
 
 GREENHOUSE_URL = 'https://boards-api.greenhouse.io/v1/boards/{slug}/jobs?content=true'
 LEVER_URL = 'https://api.lever.co/v0/postings/{slug}?mode=json'
@@ -335,11 +345,37 @@ FETCHERS = {
 NEEDS_DETAIL_FETCH = {'SmartRecruiters', 'Workday'}
 
 
+def _get_detail_json(url):
+    """One detail fetch: short timeout, no retries, JSON back."""
+    response = detail_session.get(
+        url, headers={**HEADERS, 'Accept': 'application/json'}, timeout=DETAIL_TIMEOUT)
+    if response.status_code != 200:
+        raise RuntimeError(f'HTTP {response.status_code}')
+    return response.json()
+
+
+def _workday_cxs_url(link):
+    """
+    Turn a Workday human posting URL into its JSON (cxs) endpoint.
+
+        https://TENANT.wdN.myworkdayjobs.com/SITE/externalPath
+        https://TENANT.wdN.myworkdayjobs.com/wday/cxs/TENANT/SITE/externalPath
+
+    The human URL returns JSON without a jobPostingInfo body, so the old code
+    fetched it, read nothing, and every Workday job stayed title-only. The cxs
+    path is the one that carries the description.
+    """
+    parts = urlparse(link)
+    tenant = parts.netloc.split('.')[0]
+    return f'https://{parts.netloc}/wday/cxs/{tenant}{parts.path}'
+
+
 def _detail_smartrecruiters(job):
     """Full posting text for one SmartRecruiters job."""
     posting_id = job['link'].rstrip('/').rsplit('/', 1)[-1]
     slug = job['link'].split('/')[-2]
-    data = _get_json(f'https://api.smartrecruiters.com/v1/companies/{slug}/postings/{posting_id}')
+    data = _get_detail_json(
+        f'https://api.smartrecruiters.com/v1/companies/{slug}/postings/{posting_id}')
 
     sections = (data.get('jobAd') or {}).get('sections') or {}
     parts = [
@@ -350,16 +386,9 @@ def _detail_smartrecruiters(job):
 
 
 def _detail_workday(job):
-    """Full posting text for one Workday job."""
-    response = session.get(
-        job['link'],
-        headers={**HEADERS, 'Accept': 'application/json'},
-        timeout=TIMEOUT,
-    )
-    if response.status_code != 200:
-        raise RuntimeError(f'HTTP {response.status_code}')
-
-    info = response.json().get('jobPostingInfo') or {}
+    """Full posting text for one Workday job, from the cxs JSON endpoint."""
+    data = _get_detail_json(_workday_cxs_url(job['link']))
+    info = data.get('jobPostingInfo') or {}
     return _strip_html(info.get('jobDescription', ''))
 
 
@@ -400,7 +429,18 @@ def enrich_descriptions(jobs, should_fetch, max_fetches=60):
         )
 
     enriched = 0
-    for job in candidates[:max_fetches]:
+    # A cumulative wall-clock ceiling so a run of slow detail pages cannot drag
+    # the whole daily run out. This is the same lesson as the Apify stall: cap
+    # the time, not just the count.
+    deadline = time.monotonic() + DETAIL_BUDGET_SECS
+    budget = candidates[:max_fetches]
+    for i, job in enumerate(budget):
+        if time.monotonic() > deadline:
+            logger.warning(
+                f"[ATS] enrichment hit its {DETAIL_BUDGET_SECS}s budget after {i} fetches; "
+                f"{len(budget) - i} jobs keep title-only scoring."
+            )
+            break
         try:
             description = DETAIL_FETCHERS[job['source']](job)
         except Exception as e:
