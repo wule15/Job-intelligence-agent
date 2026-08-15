@@ -45,11 +45,11 @@ lines = [
     ("THE THREE NUMBERS IT CALCULATES FOR YOU", "h"),
     ("•  Estimated 1RM  —  your true strength on a lift, using the Epley formula: weight × (1 + reps/30).", "b"),
     ("•  New PR?  —  automatically flags the set as a personal record when its estimated 1RM beats every past set of that lift.", "b"),
-    ("•  Suggested Next Weight  —  your heaviest set + 2.5 kg, so you always know the next target. That is progressive overload.", "b"),
+    ("•  Suggested Next Weight  —  your heaviest set + one step, so you always know the next target. That is progressive overload.", "b"),
     ("", ""),
     ("TIPS", "h"),
-    ("•  Add or rename your lifts on the 'Exercises' tab — the dropdown and the Progress dashboard update automatically.", "b"),
-    ("•  Using pounds? Just treat every 'kg' as 'lb' and change the +2.5 step on the Progress tab to +5.", "b"),
+    ("•  Add or rename up to 25 lifts on the 'Exercises' tab — the dropdown and the Progress dashboard update automatically.", "b"),
+    ("•  Using pounds? Change ONE cell — the 'Weight step' on the Progress tab — from 2.5 to 5. That's it.", "b"),
     ("•  Keep it in Google Sheets (File ▸ Import) or Excel — it works in both.", "b"),
     ("", ""),
     ("LEGEND", "h"),
@@ -69,8 +69,9 @@ ex.column_dimensions["A"].width = 30
 hdr(ex, 1, ["Exercises (edit freely)"])
 exercises = ["Bench Press", "Squat", "Deadlift", "Overhead Press", "Barbell Row",
              "Pull Up", "Incline Bench", "Romanian Deadlift", "Leg Press", "Lat Pulldown"]
-for i, name in enumerate(exercises):
-    c = ex.cell(row=2+i, column=1, value=name)
+CAP = 25  # dropdown + dashboard capacity (must match everywhere)
+for i in range(CAP):
+    c = ex.cell(row=2+i, column=1, value=(exercises[i] if i < len(exercises) else None))
     c.font = BODY; c.fill = INPUT_FILL; c.border = BORDER
 
 # ================= WORKOUT LOG =================
@@ -118,18 +119,24 @@ for idx in range(LAST):
         log.cell(row=r, column=5, value=rpe)
     else:
         log.cell(row=r, column=1).number_format = "yyyy-mm-dd"
-    # calc cells
-    f = log.cell(row=r, column=6, value=f'=IF($C{r}="","",$C{r}*$D{r})')
-    g = log.cell(row=r, column=7, value=f'=IF($C{r}="","",ROUND($C{r}*(1+$D{r}/30),1))')
+    # calc cells — numeric guards so a stray label (e.g. "BW") yields blank, not #VALUE!
+    f = log.cell(row=r, column=6,
+                 value=f'=IF(AND(ISNUMBER($C{r}),ISNUMBER($D{r})),$C{r}*$D{r},"")')
+    g = log.cell(row=r, column=7,
+                 value=f'=IF(AND(ISNUMBER($C{r}),ISNUMBER($D{r})),ROUND($C{r}*(1+$D{r}/30),1),"")')
+    # PR flag via SUMPRODUCT(MAX(...)) — portable (Excel + Google Sheets + LibreOffice),
+    # N() coerces any text weight/reps to 0 so the running-max never hits #VALUE!
     h = log.cell(row=r, column=8,
-                 value=f'=IF($C{r}="","",IF($G{r}=_xlfn.MAXIFS($G$2:$G{r},$B$2:$B{r},$B{r}),"🏆 PR",""))')
+                 value=(f'=IF($G{r}="","",IF(ROUND($C{r}*(1+$D{r}/30),1)='
+                        f'ROUND(SUMPRODUCT(MAX(($B$2:$B{r}=$B{r})*N($C$2:$C{r})*(1+N($D$2:$D{r})/30))),1),'
+                        f'"🏆 PR",""))'))
     for c in (f, g, h):
         c.fill = CALC_FILL; c.font = BODY; c.border = BORDER
         c.alignment = Alignment(horizontal="center")
     h.font = Font(name=ARIAL, bold=True, size=11, color="B45309")
 
 # dropdown for Exercise column
-dv = DataValidation(type="list", formula1="='Exercises'!$A$2:$A$21", allow_blank=True)
+dv = DataValidation(type="list", formula1="='Exercises'!$A$2:$A$26", allow_blank=True)
 log.add_data_validation(dv)
 dv.add(f"B2:B{LAST+1}")
 
@@ -143,34 +150,43 @@ for col, w in zip("BCDEFG", [22, 15, 16, 12, 15, 20]):
 pr["B2"] = "PROGRESS DASHBOARD"; pr["B2"].font = TITLE_FONT
 pr["B3"] = "Best lifts, total work, and your next target — updates as you log."; pr["B3"].font = SUB_FONT
 
+# progression step lives in ONE cell — change to 5 for pounds, no formula editing
+pr["B4"] = "Weight step (set to 5 for lb):"; pr["B4"].font = BOLD
+step = pr["D4"]; step.value = 2.5
+step.font = Font(name=ARIAL, bold=True, color="2563EB"); step.fill = INPUT_FILL
+step.alignment = Alignment(horizontal="center"); step.border = BORDER; step.number_format = "#,##0.0"
+
 pr["B5"] = "This week's total volume (kg):"; pr["B5"].font = BOLD
 wk = pr["D5"]
 wk.value = '=SUMIFS(\'Workout Log\'!$F$2:$F$61,\'Workout Log\'!$A$2:$A$61,">="&(TODAY()-7))'
 wk.font = ACCENT; wk.alignment = Alignment(horizontal="center"); wk.number_format = "#,##0"
 
+# shared reference fragments
+LB = "'Workout Log'!$B$2:$B$61"   # exercise column
+LC = "'Workout Log'!$C$2:$C$61"   # weight column
+LD = "'Workout Log'!$D$2:$D$61"   # reps column
+LF = "'Workout Log'!$F$2:$F$61"   # volume column
+
 ph = ["Exercise", "Best Est. 1RM", "Heaviest Set (kg)", "Total Sets", "Total Volume", "Suggested Next Weight"]
 hdr(pr, 7, ph, start=2)
-for i in range(len(exercises)):
+for i in range(CAP):
     r = 8 + i
-    a = pr.cell(row=r, column=2, value=f"='Exercises'!A{2+i}")
+    a = pr.cell(row=r, column=2, value=f"=IF('Exercises'!A{2+i}=\"\",\"\",'Exercises'!A{2+i})")
     a.font = BOLD; a.border = BORDER
+    have = f'COUNTIF({LB},$B{r})'                       # 0 if this exercise never logged
+    # conditional MAX via SUMPRODUCT(MAX(...)) — portable, N() neutralises any text cells
+    best1rm = f'ROUND(SUMPRODUCT(MAX(({LB}=$B{r})*N({LC})*(1+N({LD})/30))),1)'
+    heavy   = f'SUMPRODUCT(MAX(({LB}=$B{r})*N({LC})))'
     # best est 1RM
-    b = pr.cell(row=r, column=3,
-        value=(f'=IF(COUNTIF(\'Workout Log\'!$B$2:$B$61,$B{r})=0,"-",'
-               f'_xlfn.MAXIFS(\'Workout Log\'!$G$2:$G$61,\'Workout Log\'!$B$2:$B$61,$B{r}))'))
+    b = pr.cell(row=r, column=3, value=f'=IF($B{r}="","",IF({have}=0,"-",{best1rm}))')
     # heaviest set weight
-    c = pr.cell(row=r, column=4,
-        value=(f'=IF(COUNTIF(\'Workout Log\'!$B$2:$B$61,$B{r})=0,"-",'
-               f'_xlfn.MAXIFS(\'Workout Log\'!$C$2:$C$61,\'Workout Log\'!$B$2:$B$61,$B{r}))'))
+    c = pr.cell(row=r, column=4, value=f'=IF($B{r}="","",IF({have}=0,"-",{heavy}))')
     # total sets
-    d = pr.cell(row=r, column=5, value=f'=COUNTIF(\'Workout Log\'!$B$2:$B$61,$B{r})')
+    d = pr.cell(row=r, column=5, value=f'=IF($B{r}="","",{have})')
     # total volume
-    e = pr.cell(row=r, column=6,
-        value=f'=SUMIF(\'Workout Log\'!$B$2:$B$61,$B{r},\'Workout Log\'!$F$2:$F$61)')
-    # suggested next weight = heaviest + 2.5
-    fnc = pr.cell(row=r, column=7,
-        value=(f'=IF(COUNTIF(\'Workout Log\'!$B$2:$B$61,$B{r})=0,"-",'
-               f'_xlfn.MAXIFS(\'Workout Log\'!$C$2:$C$61,\'Workout Log\'!$B$2:$B$61,$B{r})+2.5)'))
+    e = pr.cell(row=r, column=6, value=f'=IF($B{r}="","",SUMIF({LB},$B{r},{LF}))')
+    # suggested next weight = heaviest + step
+    fnc = pr.cell(row=r, column=7, value=f'=IF($B{r}="","",IF({have}=0,"-",{heavy}+$D$4))')
     for cell in (b, c, d, e, fnc):
         cell.font = BODY; cell.border = BORDER; cell.alignment = Alignment(horizontal="center")
     fnc.font = Font(name=ARIAL, bold=True, size=11, color="2563EB")

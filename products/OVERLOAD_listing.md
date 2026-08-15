@@ -22,8 +22,8 @@ Stop guessing your progress. OVERLOAD turns your training log into a smart dashb
 - **Automatic PR detection** — a 🏆 flag appears the moment a set beats your all-time best for that lift.
 - **Progress Dashboard** — best 1RM, heaviest set, total sets, total volume, and your **suggested next weight** for every exercise.
 - **This-week volume tracker** — see your total workload for the last 7 days at a glance.
-- **Custom exercise list** — add or rename lifts once; the dropdown and dashboard update automatically.
-- **kg or lb** — works either way.
+- **Custom exercise list** — add or rename up to 25 lifts once; the dropdown and dashboard update automatically.
+- **kg or lb** — switch by changing a single cell (the "Weight step" on the Progress tab).
 
 **Who it's for**
 Lifters running any progressive-overload program (PPL, Upper/Lower, 5×5, PHUL). If you want to actually *see* whether you're getting stronger — not just scribble numbers in your phone — this is for you.
