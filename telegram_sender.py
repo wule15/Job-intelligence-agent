@@ -1,10 +1,13 @@
 #!/usr/bin/env python3
 """Send job digest summary to Telegram - only NEW jobs (no duplicates)."""
 
+import ipaddress
+import socket
 import sqlite3
 from collections import defaultdict
 from datetime import datetime
 from functools import lru_cache
+from urllib.parse import urljoin, urlparse
 
 import requests
 
@@ -59,6 +62,32 @@ def is_low_priority_source(source):
     return any(marker in s for marker in LOW_PRIORITY_SOURCE_MARKERS)
 
 
+def _is_internal_url(url):
+    """
+    True if a URL targets anything that is not a public web address: a non
+    http(s) scheme, or a host that resolves to a private, loopback, link-local
+    (this covers the cloud metadata address 169.254.169.254), or reserved IP.
+
+    The liveness check visits apply links that come from scraped listings, i.e.
+    a stranger chooses the address this machine fetches. Refusing internal
+    targets stops that being used to probe the local network (an SSRF guard).
+    """
+    try:
+        parts = urlparse(url)
+        if parts.scheme not in ('http', 'https') or not parts.hostname:
+            return True
+        for info in socket.getaddrinfo(parts.hostname, None):
+            ip = ipaddress.ip_address(info[4][0])
+            if (ip.is_private or ip.is_loopback or ip.is_link_local
+                    or ip.is_reserved or ip.is_multicast or ip.is_unspecified):
+                return True
+        return False
+    except Exception:
+        # Unresolvable or malformed: not fetchable anyway, let it fall through
+        # to a normal (failing) request rather than blocking a real host.
+        return False
+
+
 @lru_cache(maxsize=2048)
 def check_link_live(url, timeout=6):
     """
@@ -68,30 +97,44 @@ def check_link_live(url, timeout=6):
     a 200 page whose text says the role is filled or expired. Anything
     ambiguous, a timeout, a bot block, or any other non-200, returns True.
     Dropping a real job over a transient error is worse than letting one stale
-    link through, so the check only removes what it can prove is dead.
+    link through, so the check only removes what it can prove is dead. A link to
+    a private/internal address is refused outright (see _is_internal_url).
+
+    Redirects are followed by hand, one hop at a time, so the internal-address
+    guard is applied to every hop and not just the first, which is what closes
+    the redirect-to-internal SSRF bypass. Cached per run so the same URL is
+    fetched at most once.
 
     What it catches: a real HTTP 404 or 410 (RemoteOK and The Muse do this),
     and a 200 page carrying explicit expired text. What it does NOT catch: a
     soft 404 that answers 200 and quietly serves an index page (Jobicy does
     this), and a board that bot-blocks the request (Indeed answers 200 with a
-    block page). Both read as live here. Keeping Indeed and JSearch off the
-    digest is the job of the source demotion, not this check; this check is the
-    net for the boards that fail honestly. Cached per run so the same URL is
-    fetched at most once.
+    block page). Both read as live here.
     """
     if not url:
         return True
-    try:
-        resp = requests.get(
-            url, timeout=timeout, allow_redirects=True,
-            headers={'User-Agent': 'Mozilla/5.0 (job-digest liveness check)'})
-    except Exception:
-        return True
-    if resp.status_code in (404, 410):
-        return False
-    if resp.status_code != 200:
-        return True
-    return not any(marker in resp.text.lower() for marker in EXPIRED_PAGE_MARKERS)
+    current = url
+    for _hop in range(5):
+        if _is_internal_url(current):
+            return False  # never fetch a private/internal address
+        try:
+            resp = requests.get(
+                current, timeout=timeout, allow_redirects=False,
+                headers={'User-Agent': 'Mozilla/5.0 (job-digest liveness check)'})
+        except Exception:
+            return True
+        if resp.status_code in (301, 302, 303, 307, 308):
+            location = resp.headers.get('Location')
+            if not location:
+                return True
+            current = urljoin(current, location)
+            continue
+        if resp.status_code in (404, 410):
+            return False
+        if resp.status_code != 200:
+            return True
+        return not any(marker in resp.text.lower() for marker in EXPIRED_PAGE_MARKERS)
+    return True  # too many redirects is not proof the job is gone
 
 
 def init_telegram_tracking():
@@ -146,7 +189,7 @@ def get_unsent_jobs(limit=DIGEST_SIZE, min_score=MIN_DIGEST_SCORE, is_live=None)
         conn = sqlite3.connect(Config.DATABASE_PATH)
         cursor = conn.cursor()
         cursor.execute("""
-            SELECT id, job_title, company, relevance_score, link, best_cv, source
+            SELECT id, job_title, company, relevance_score, link, best_cv, source, scam_risk
             FROM jobs
             WHERE id NOT IN (SELECT job_id FROM telegram_sent_jobs)
             ORDER BY relevance_score DESC, extracted_date DESC
@@ -241,7 +284,7 @@ def get_unsent_jobs(limit=DIGEST_SIZE, min_score=MIN_DIGEST_SCORE, is_live=None)
 
     # Keep the source column (job[6]) so the digest can show where each job came
     # from. Returns (id, title, company, score, link, best_cv, source) tuples.
-    return [job[:7] for job in selected]
+    return [job[:8] for job in selected]
 
 def get_direct_jobs(limit=DIRECT_DIGEST_SIZE, min_score=MIN_DIGEST_SCORE):
     """
@@ -257,7 +300,7 @@ def get_direct_jobs(limit=DIRECT_DIGEST_SIZE, min_score=MIN_DIGEST_SCORE):
     padded with a weak match. An empty result is normal, and the run says so
     rather than sending a filler message.
 
-    Returns (id, title, company, score, link, best_cv, source) tuples.
+    Returns (id, title, company, score, link, best_cv, source, scam_risk) tuples.
     """
     sources = list(ATS_SOURCES)
     try:
@@ -265,7 +308,7 @@ def get_direct_jobs(limit=DIRECT_DIGEST_SIZE, min_score=MIN_DIGEST_SCORE):
         cursor = conn.cursor()
         placeholders = ','.join('?' for _ in sources)
         cursor.execute(f"""
-            SELECT id, job_title, company, relevance_score, link, best_cv, source
+            SELECT id, job_title, company, relevance_score, link, best_cv, source, scam_risk
             FROM jobs
             WHERE id NOT IN (SELECT job_id FROM telegram_sent_jobs)
               AND source IN ({placeholders})
@@ -290,7 +333,7 @@ def get_direct_jobs(limit=DIRECT_DIGEST_SIZE, min_score=MIN_DIGEST_SCORE):
         selected.append(job)
         company_counts[company] += 1
 
-    return [job[:7] for job in selected]
+    return [job[:8] for job in selected]
 
 def mark_jobs_sent(job_ids):
     """Mark jobs as sent in Telegram."""
@@ -348,11 +391,12 @@ def _render_job_lines(jobs):
     source) tuples.
     """
     lines = ""
-    for i, (job_id, title, company, score, link, best_cv, source) in enumerate(jobs, 1):
+    for i, (job_id, title, company, score, link, best_cv, source, scam_flag) in enumerate(jobs, 1):
         score_pct = round(score, 1) if score else 0
-        # Recompute the scam-risk flag from the fields the digest has. The scorer
-        # already sank this job; the marker tells you why so you verify first.
-        risky = scam_risk(title, company=company, link=link or '')
+        # Trust the flag the scorer persisted (it saw the full description), and
+        # recompute from the visible fields as a backup. The scorer already sank
+        # this job; the marker tells you why so you verify before applying.
+        risky = bool(scam_flag) or scam_risk(title, company=company, link=link or '')
         flag = " ⚠️" if risky else ""
         lines += f"<b>{i}. {title}{flag}</b>\n"
         lines += f"   💼 {company}\n"

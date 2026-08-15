@@ -9,6 +9,8 @@ between how CVs are written and how job ads are written.
 Add new entries freely, the more the better.
 """
 
+from functools import lru_cache
+
 # Each key is a canonical skill term (lowercase).
 # Each value is a list of additional terms that mean the same thing
 # and are likely to appear in job postings.
@@ -219,14 +221,19 @@ SYNONYMS: dict[str, list[str]] = {
 }
 
 
-def expand_skill(skill: str) -> list[str]:
+@lru_cache(maxsize=1024)
+def expand_skill(skill: str) -> tuple:
     """
-    Return all terms to search for a given skill:
-    the skill itself + all known synonyms (all lowercase).
+    Return all terms to search for a given skill: the skill itself plus its
+    known synonyms, all lowercase.
+
+    Cached and returned as an immutable tuple because the scorer calls this for
+    every CV skill against every one of thousands of jobs per run, while the
+    skill set is small and fixed. Recomputing (and re-lowercasing) it each time
+    was pure waste.
     """
     base = skill.lower().strip()
-    extras = SYNONYMS.get(base, [])
-    return [base] + [s.lower() for s in extras]
+    return (base, *(s.lower() for s in SYNONYMS.get(base, ())))
 
 
 def skill_matches(skill: str, text: str) -> bool:
