@@ -19,7 +19,50 @@ from core.job_filter import (  # noqa: E402
     us_location_multiplier,
     US_LOCATION_PENALTY,
     TITLE_BOOST_MULTIPLIER,
+    scam_risk,
+    JobFilter,
 )
+
+
+class TestScamRisk:
+    """A softer layer than the hard block: suspicious jobs are flagged and
+    heavily downranked, not deleted. Must work on title/company/link alone so
+    the digest can recompute the flag."""
+
+    def test_off_platform_apply_is_risky(self):
+        assert scam_risk('Data Entry Clerk', 'Apply via WhatsApp to +1 555 0100')
+        assert scam_risk('Remote Assistant, text us to apply')
+
+    def test_pay_to_work_is_risky(self):
+        assert scam_risk('Warehouse role', 'A refundable deposit is required to start')
+        assert scam_risk('Agent', 'Pay a fee to secure onboarding')
+
+    def test_reshipping_front_is_risky(self):
+        assert scam_risk('Package Forwarding Coordinator (work from home)')
+
+    def test_free_paas_apply_link_is_risky(self):
+        assert scam_risk('Sales Rep', link='https://vacancy.up.railway.app/apply')
+
+    def test_flag_works_on_title_and_company_only(self):
+        # The digest recomputes with no description; the signal must survive.
+        assert scam_risk('Recruiter', company='Reach me on WhatsApp Ltd',
+                         link='https://indeed.com/x')
+
+    def test_a_normal_job_is_not_flagged(self):
+        assert not scam_risk('Sales Engineer', 'Kv valve sizing and flow control',
+                             'Flowserve', 'https://boards.greenhouse.io/x/jobs/1')
+
+    def test_scam_risk_downranks_but_does_not_drop(self):
+        jf = JobFilter()
+        jobs = [{
+            'title': 'Remote Data Entry, text us to apply',
+            'company': 'QuickHire', 'source': 'Apify / Indeed',
+            'description': 'Earn from home. Text us to apply now.',
+            'link': 'https://indeed.com/viewjob?jk=1',
+        }]
+        out = jf.filter_jobs(jobs, min_score=0)
+        assert len(out) == 1, 'a suspected scam is downranked, not dropped'
+        assert out[0].get('scam_risk') is True
 
 
 class TestUSDownrank:
