@@ -9,7 +9,7 @@ from functools import lru_cache
 import requests
 
 from core.config import Config
-from core.job_filter import ALWAYS_INCLUDE_SOURCES
+from core.job_filter import ALWAYS_INCLUDE_SOURCES, scam_risk
 from core.utils import format_cv_label
 
 # ── Digest composition ───────────────────────────────────────────────────────
@@ -350,9 +350,15 @@ def _render_job_lines(jobs):
     lines = ""
     for i, (job_id, title, company, score, link, best_cv, source) in enumerate(jobs, 1):
         score_pct = round(score, 1) if score else 0
-        lines += f"<b>{i}. {title}</b>\n"
+        # Recompute the scam-risk flag from the fields the digest has. The scorer
+        # already sank this job; the marker tells you why so you verify first.
+        risky = scam_risk(title, company=company, link=link or '')
+        flag = " ⚠️" if risky else ""
+        lines += f"<b>{i}. {title}{flag}</b>\n"
         lines += f"   💼 {company}\n"
         lines += f"   ⭐ Match: {score_pct}%\n"
+        if risky:
+            lines += "   ⚠️ Possible scam, verify the employer before applying\n"
         if source:
             lines += f"   🌐 {source}\n"
         cv_label = format_cv_label(best_cv)

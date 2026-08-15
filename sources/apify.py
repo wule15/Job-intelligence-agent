@@ -106,7 +106,12 @@ def search_indeed(queries: list[str], max_per_query: int = 25) -> list[dict]:
                 "position": query,
                 "location": "Remote",
                 "maxItems": max_per_query,
-                "parseJobDetail": True,
+                # List-only. With parseJobDetail True the actor fetches a full
+                # detail page per job and crawls thousands of pages, which is
+                # what stalled the run. The scam-risk screen downstream works on
+                # the title, company and link this returns, so full descriptions
+                # are not needed here.
+                "parseJobDetail": False,
             }, timeout_secs=120)
             for item in client.dataset(run["defaultDatasetId"]).iterate_items():
                 try:
@@ -175,13 +180,18 @@ class ApifyJobSearcher:
                 seen.add(key)
                 all_jobs.append(job)
 
-        # 2. Indeed via Apify is DISABLED on purpose. The misceres/indeed-scraper
-        #    ignores maxItems and crawls the whole location (4,000+ pages), which
-        #    stalled the daily run for 30+ minutes and burned the entire monthly
-        #    Apify free credit in a single call. Its output is also the lowest
-        #    value in the digest: Indeed is demoted, and the ATS boards plus the
-        #    free aggregators already cover this ground. Re-enable only behind an
-        #    actor that honours a hard page cap. search_indeed() is kept for that.
+        # 2. Indeed, list-only and hard-capped. parseJobDetail=False stops the
+        #    detail-page crawl that used to stall the run, maxItems caps it, and
+        #    timeout_secs is the backstop. Indeed is the noisiest, scam-prone
+        #    source, so downstream it is demoted as a source AND any listing that
+        #    trips the scam-risk screen is penalised and flagged.
+        logger.info(f"[Apify/Indeed] Searching with broad queries...")
+        for job in search_indeed(["remote engineer", "content strategy"]):
+            link = job.get("link", "")
+            key  = link or f"{job['title']}|{job['company']}"
+            if key not in seen:
+                seen.add(key)
+                all_jobs.append(job)
 
-        logger.info(f"[Apify] {len(all_jobs)} unique jobs total (Indeed disabled)")
+        logger.info(f"[Apify] {len(all_jobs)} unique jobs total")
         return all_jobs

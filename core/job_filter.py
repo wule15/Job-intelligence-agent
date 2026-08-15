@@ -206,6 +206,52 @@ def is_blocked_source(job: dict) -> bool:
     return False
 
 
+# ── Scam-risk screen ──────────────────────────────────────────────────────────
+# A softer layer than is_blocked_source. That function DROPS jobs it can prove
+# are malicious (known boards, free-PaaS apply links, known funnel domains).
+# This one flags jobs that merely look risky, on the limited fields an aggregator
+# like Indeed returns list-only (title, company, link). A hit does not drop the
+# job: it heavily downranks it and marks it so the digest can warn before you
+# apply. Phrases are chosen to be high precision, things a real employer does not
+# put in a posting, so legitimate jobs are not swept up.
+SCAM_RISK_PHRASES = (
+    # Off-platform "apply by messaging a number", the classic recruitment scam
+    'via whatsapp', 'on whatsapp', 'whatsapp:', 'contact me on whatsapp',
+    'reach me on whatsapp', 'via telegram', 'telegram to apply', 'apply on telegram',
+    'message me on telegram', 'dm me on telegram', 'text us to apply', 'text to apply',
+    'text me to apply', 'sms to apply',
+    # Pay-to-work, never legitimate
+    'registration fee', 'processing fee', 'application fee', 'startup fee',
+    'onboarding fee', 'pay a fee to', 'refundable deposit', 'security deposit required',
+    # Money-mule / reshipping fronts
+    'reshipping', 'package forwarding', 'money mule', 'payment processing agent from home',
+)
+
+# How hard a scam-risk hit sinks the score. Heavier than the US or remote
+# penalties: a suspected scam should fall to the bottom, usually below the digest
+# bar, but is not deleted outright since the screen is a heuristic.
+SCAM_RISK_PENALTY = 0.35
+
+
+def scam_risk(title: str, description: str = '', company: str = '', link: str = '') -> bool:
+    """
+    True when a listing shows scam-risk signals but was not outright blocked.
+
+    Deliberately usable with only title, company and link, so the digest can
+    recompute it at display time (where the description is not available) and
+    show the same warning the scorer used to downrank it.
+    """
+    text = f"{title} {description} {company}".lower()
+    if any(phrase in text for phrase in SCAM_RISK_PHRASES):
+        return True
+    # A free-PaaS or known-funnel host anywhere in the link or body is a strong
+    # decoy signal even when is_blocked_source did not have enough to drop it.
+    for host, _path in _urls_in(f"{link} {description}"):
+        if _is_free_paas(host) or _is_scam_destination(host):
+            return True
+    return False
+
+
 # ── US location downrank ──────────────────────────────────────────────────────
 # A US-located listing carrying no worldwide or European eligibility signal is
 # pushed down the digest rather than dropped, because such a listing is
@@ -577,6 +623,11 @@ class JobFilter:
                 multiplier = us_location_multiplier(job)
                 if not self.is_remote(job):
                     multiplier *= REMOTE_PREFERENCE_PENALTY
+                # Suspected scam: sink it and mark it, but do not delete, since
+                # this is a heuristic. The digest recomputes the flag to warn.
+                if scam_risk(title, description, company, job.get('link', '')):
+                    multiplier *= SCAM_RISK_PENALTY
+                    job['scam_risk'] = True
             job['relevance_score'] = round(score * multiplier)
             job['best_cv'] = best_cv
             scored_jobs.append(job)
