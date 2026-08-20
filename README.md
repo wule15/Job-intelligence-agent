@@ -315,6 +315,29 @@ twice. Each letter is one API call, which is why the count is capped.
 python dashboard.py           # http://localhost:5000
 ```
 
+![Local dashboard](docs/dashboard-demo.png)
+
+_Screenshot uses sample data. The dashboard reads only your own local database._
+
+A local Flask dashboard over your own database. It runs entirely on your
+machine and reads only your local DB, so nothing about your search leaves the
+laptop and each user sees only their own data.
+
+It lists every job the pipeline found, each with its relevance score, which CV
+variant scored it, the source, detected industry, and how many times it has
+been relisted. From there you can:
+
+- **Filter** by minimum score, source, date, industry, origin (email or
+  search), and which inbox the job came from.
+- **Track applications.** Mark any job `applied`, `interviewing`, or
+  `rejected`. The status persists and the header keeps a running count.
+- **Jump to the source email.** Jobs found through the email tracker deep-link
+  straight to the original Gmail message.
+- **Export to CSV**, pull up similar jobs, or delete a dead link, inline.
+
+A `/stats` endpoint returns totals, source count, and average and top score as
+JSON.
+
 ---
 
 ## The daily digest
