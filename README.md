@@ -4,6 +4,34 @@ Reads company careers pages and job boards every morning, scores what it finds a
 
 ---
 
+## Quick start
+
+Five minutes to a first run. The full [Setup](#setup) section explains every
+option, this is the shortest path that works.
+
+```bash
+git clone https://github.com/wule15/Job-intelligence-agent.git
+cd job-intelligence-agent
+python -m venv .venv && source .venv/bin/activate   # Windows: .venv\Scripts\activate
+pip install -r requirements.txt
+
+cp .env.example .env                                 # add a Gmail app password + Telegram bot token
+cp config/companies.example.json config/companies.json
+cp master-cv.example.yaml master-cv.yaml             # list your skills, one block per CV variant
+
+python validate_system.py                            # check config and connectivity
+python job_search_smart.py                           # one real run, sends a Telegram digest
+python dashboard.py                                  # optional, browse results at localhost:5000
+```
+
+The two files that decide how well it works are `config/companies.json` (the
+employers whose boards it reads) and `master-cv.yaml` (the skills it scores
+against). Everything else has a sensible default, and any missing job-board API
+key just disables that one source. Both files are gitignored and stay on your
+machine.
+
+---
+
 ## Pipeline
 
 ```
