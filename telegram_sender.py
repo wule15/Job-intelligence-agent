@@ -28,10 +28,11 @@ MAX_PER_COMPANY = 2
 # the highest-signal jobs, not a second full feed.
 DIRECT_DIGEST_SIZE = 10
 
-# Higher than the storage cutoff. Everything above MIN_RELEVANCE_SCORE is
-# worth keeping and reviewing on the dashboard; only the stronger matches are
-# worth interrupting your day for.
-MIN_DIGEST_SCORE = 25
+# Set equal to the storage cutoff on request: the digest sends everything worth
+# keeping rather than only the strongest matches, so a thin-supply day still
+# produces a digest instead of an empty one. Trade-off: lower-scoring jobs will
+# appear again. Raise this back toward 25 once supply improves.
+MIN_DIGEST_SCORE = 10
 
 # Company careers boards, read from their applicant tracking system. Held to
 # their own quota because they are the highest signal source and would
