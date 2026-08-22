@@ -20,13 +20,29 @@ class Database:
         self.connect()
         self._run_migrations()
 
+    # One shared connection per database path, per process. A run creates
+    # several Database() objects (the searcher, the JSearch source, the Gmail
+    # source), and separate SQLite connections all writing the same file under
+    # WAL is what produced "database is locked" on every storage write. Sharing
+    # one connection makes the process a single writer, which SQLite is happy
+    # with. check_same_thread is off so the shared handle survives the (rare)
+    # cross-thread use; the run is effectively single-threaded for writes.
+    _shared = {}
+
     def connect(self):
-        """Connect to database."""
-        self.connection = sqlite3.connect(self.db_path)
-        self.connection.row_factory = sqlite3.Row
-        # Enable WAL mode for concurrent access
-        self.connection.execute("PRAGMA journal_mode = WAL;")
-        self.connection.execute("PRAGMA synchronous = NORMAL;")
+        """Connect to database, reusing a shared per-path connection."""
+        conn = Database._shared.get(self.db_path)
+        if conn is None:
+            # timeout: sqlite3's default busy handler is 0, so a transient lock
+            # (Defender scan, WAL checkpoint) raised immediately. 30s of patient
+            # retry plus a single writer eliminates "database is locked".
+            conn = sqlite3.connect(self.db_path, timeout=30, check_same_thread=False)
+            conn.row_factory = sqlite3.Row
+            conn.execute("PRAGMA journal_mode = WAL;")
+            conn.execute("PRAGMA synchronous = NORMAL;")
+            conn.execute("PRAGMA busy_timeout = 30000;")
+            Database._shared[self.db_path] = conn
+        self.connection = conn
 
     def _run_migrations(self):
         """Run schema migrations on every startup, safe to call repeatedly."""
@@ -102,9 +118,15 @@ class Database:
             print(f"[!] Migration warning: {e}")
 
     def close(self):
-        """Close database connection."""
+        """Close the shared database connection and drop it from the registry
+        so the next Database() reopens cleanly."""
         if self.connection:
-            self.connection.close()
+            try:
+                self.connection.close()
+            finally:
+                if Database._shared.get(self.db_path) is self.connection:
+                    del Database._shared[self.db_path]
+                self.connection = None
 
     def init_database(self):
         """Initialize database schema."""

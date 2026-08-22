@@ -185,10 +185,13 @@ class SmartJobSearcher:
             queries.add("remote CFD engineer")
             queries.add("remote aerodynamics engineer")
 
-        if has_valve:
+        if has_valve or has_domain:
             queries.add("remote valve engineer")
             queries.add("remote fluid systems engineer")
             queries.add("remote process engineer")
+            queries.add("remote application engineer")
+            queries.add("remote commissioning engineer")
+            queries.add("remote field application engineer")
 
         if has_content and has_ai:
             queries.add("remote AI content strategist")
@@ -201,10 +204,21 @@ class SmartJobSearcher:
         if has_sales and (has_valve or has_domain):
             queries.add("remote technical sales engineer")
             queries.add("remote sales engineer fluid systems")
+            queries.add("remote solutions engineer industrial")
+            queries.add("remote pre-sales engineer")
 
-        if has_ai and has_content:
-            # Only add AI queries when paired with content, avoids pulling pure programming jobs
-            queries.add("remote AI content operations")
+        # AI-enabled roles are wanted. These used to be gated behind content to
+        # avoid pulling pure programming; the is_pure_programming filter now
+        # drops non-AI dev roles downstream, so the queries can run freely.
+        if has_ai:
+            queries.add("remote AI automation engineer")
+            queries.add("remote AI implementation specialist")
+            queries.add("remote automation specialist")
+            queries.add("remote AI operations specialist")
+            if has_content:
+                queries.add("remote AI content operations")
+            if has_sales:
+                queries.add("remote AI solutions engineer")
 
         if has_outbound or has_sales:
             queries.add("remote appointment setter")

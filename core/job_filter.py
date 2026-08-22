@@ -26,6 +26,30 @@ NEGATIVE_KEYWORDS = [
     'relocation required', 'must relocate',
 ]
 
+# Pure software-development roles the candidate does not want, matched on the
+# TITLE (high precision, avoids false positives from tech mentioned in a
+# sales/engineering job description). A role that also signals AI/ML/automation
+# is kept, because that hybrid work IS wanted, see AI_CONTEXT_MARKERS.
+PURE_DEV_TITLE_MARKERS = [
+    'software engineer', 'software developer', 'sw engineer',
+    'backend engineer', 'back-end engineer', 'backend developer',
+    'frontend engineer', 'front-end engineer', 'frontend developer',
+    'full stack', 'full-stack', 'fullstack', 'web developer',
+    'devops engineer', 'site reliability', 'sre engineer', 'platform engineer',
+    'java developer', 'python developer', '.net developer', 'c++ developer',
+    'c# developer', 'golang developer', 'go developer', 'rust developer',
+    'php developer', 'ruby developer', 'node developer', 'node.js developer',
+    'ios developer', 'android developer', 'mobile developer',
+    'embedded software', 'firmware engineer',
+]
+
+# A dev-titled role is only dropped if it ALSO scores below this against the
+# CVs, i.e. the candidate genuinely has no overlap with it. A dev role their
+# skills DO match (AI/automation/Python-heavy work) scores above this and is
+# kept. The CV score is the reliable "can I do this?" signal; a keyword match
+# is not. This bar self-adjusts as skills are added to the master CV.
+PURE_DEV_KEEP_SCORE = 20.0
+
 # ── Work-eligibility filter ───────────────────────────────────────────────────
 # The user is a non-EU / non-US national (Serbia). A job anywhere, EU, US, UK, is
 # takeable only if they can legally work it: it either offers visa sponsorship, or
@@ -462,6 +486,14 @@ class JobFilter:
                 return True
         return False
 
+    def is_dev_titled(self, job_title):
+        """Return True if the title is a pure software-development role. This is
+        only a signal, not a verdict: the caller drops it only when the CV score
+        is also low (see PURE_DEV_KEEP_SCORE), so a dev role the candidate's
+        skills actually match is kept."""
+        title = (job_title or '').lower()
+        return any(marker in title for marker in PURE_DEV_TITLE_MARKERS)
+
     def score_job_with_cv(self, job_title, job_description, company=""):
         """
         Score a job against each CV individually.
@@ -568,6 +600,7 @@ class JobFilter:
             'blocked_source': 0,
             'not_remote': 0,
             'dealbreaker': 0,
+            'pure_programming': 0,
             'geo_restricted': 0,
             'non_english': 0,
             'below_min_score': 0,
@@ -608,6 +641,14 @@ class JobFilter:
                     continue
 
             score, best_cv = self.score_job_with_cv(title, description, company)
+
+            # Drop a pure software-dev role only when the CV score confirms the
+            # candidate has no real overlap with it. A dev role their skills DO
+            # match (AI/automation/Python work) scores above the bar and stays.
+            if not always_include and score < PURE_DEV_KEEP_SCORE and self.is_dev_titled(title):
+                logger.debug(f"Pure programming, low fit ({score}%): {title}")
+                rejected['pure_programming'] += 1
+                continue
 
             if not always_include and score < min_score:
                 rejected['below_min_score'] += 1

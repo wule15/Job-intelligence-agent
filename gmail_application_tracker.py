@@ -127,6 +127,125 @@ APPLICATION_KEYWORDS = [
     'received your application',
 ]
 
+# Senders that are never an application confirmation: job alerts, marketing,
+# community digests, order receipts. Matched against the lowercased From header.
+DROP_SENDER_SUBSTRINGS = [
+    'jobalerts-noreply@linkedin', 'glassdoor', 'updates.coursiv',
+    'community', 'newsletter@', 'digest@', 'news@', 'temu@', 'orders.temu',
+    'rabbitresume', 'talent-feedback',
+]
+
+# Subjects that look like an application but are alerts, nudges or notices.
+DROP_SUBJECT_SUBSTRINGS = [
+    'is hiring', 'job alert', "don't miss", 'don’t miss',
+    'complete your application', 'reminder', 'incomplete', 'privacy notice',
+    'data privacy', 'almost there', 'we are hiring', 'new jobs', 'jobs for you',
+    'recommended for you', 'viewed by', "don't forget", 'don’t forget',
+    'vip', 'unfinished', 'provide feedback', 'order confirmation', 'discount',
+    'boost your job', 'next step in your application',
+]
+
+# A derived company containing any of these is an artifact, not an employer
+# (CSS/HTML tokens leak in from style-heavy emails).
+COMPANY_JUNK_SUBSTRINGS = [
+    'privacy', 'notice', 'newsletter', 'community', 'no-reply', 'noreply',
+    'do not reply', 'donotreply', 'dayforce', 'list-style', 'margin',
+    'font-family', 'padding', 'ck_content', 'outlook', 'table.body', 'px',
+    ';', '{', '}', 'externalclass', 'viewport', 'http',
+]
+
+# Aggregator domains whose sender name must never be used as a company.
+AGGREGATOR_DOMAINS = ['linkedin', 'indeed', 'jooble', 'glassdoor',
+                      'ziprecruiter', 'monster', 'simplyhired']
+
+# Title extraction, applied to the CLEANED body (see _clean_body). Ordered.
+SUBJECT_TITLE_PATTERNS = [
+    r'applying for (?:the )?(.+?)(?: position| role|$)',
+]
+BODY_TITLE_PATTERNS_2 = [
+    r'apply(?:ing)? for the position (.+?)(?:[.,]| we | you |$)',
+    r'submitting your application for (?:the )?(.+?) (?:position|role|internship)',
+    r'your application for (?:the )?(.+?) (?:position|role)',
+    r'applying for (?:the )?(.+?) (?:position|role)',
+    r'apply for the (.+?) (?:job position|position|role)',
+    r'application for (?:the )?(.+?) (?:position|role)',
+    r'interest in (?:our |the |your )?(.+?) (?:position|role)',
+    r'application to (?:\d+\s+)?(.+?) (?:and your interest|and your|\. )',
+    r'for the (.+?) (?:job )?position',
+    r'review your application for (.+?)(?: shortly| soon|[.,])',
+]
+BODY_COMPANY_PATTERNS_2 = [
+    r'joining ([A-Z][A-Za-z0-9&.\'\- ]{1,38}?)(?:[.,!]| shortly| team|\?|$)',
+    r'(?:position|role) at ([A-Z][A-Za-z0-9&.\'\- ]{1,38}?)(?:[.,!]|\?|$)',
+    r'interest in (?:joining )?([A-Z][A-Za-z0-9&.\'\- ]{1,38}?)[.,!?]',
+]
+_TITLE_BAD_FIRST = {'for', 'to', 'at', 'was', 'and', 'in', 'on', 'with', 'of', 'the',
+                    'a', 'an', 'your', 'our', 'this', 'that', 'is', 'are', 'has',
+                    'have', 'we', 'you', 'us', 'it', 'confirmation', 'follow',
+                    'review', 'application', 'landed', 'update', 'thank', 'received',
+                    'submitted', 'no-reply', 'no'}
+_STOP_TITLES = {'this', 'the', 'a', 'an', 'our', 'your', 'that', 'it', 'them',
+                'you', 'us', 'future positions', 'this position', 'the position',
+                'this role', 'the role', 'these', 'any', 'position (unknown)'}
+# ATS/mail domains where the company is the left-most subdomain label.
+_ATS_SUBDOMAIN = ['talentadore.com', 'talentlyft.com', 'teamtailor-mail.com',
+                  'teamtailor.com', 'talent-tailor.com']
+
+
+def _clean_body(b):
+    """Strip CSS/style artifacts and URLs so title/company patterns see prose."""
+    b = re.sub(r'@(?:media|import|font-face|-ms-viewport|viewport|charset)[^{;]*\{[^}]*\}', ' ', b, flags=re.IGNORECASE)
+    b = re.sub(r'@import[^;]*;', ' ', b, flags=re.IGNORECASE)
+    b = re.sub(r'[.#][\w.\- ]+\s*\{[^}]*\}', ' ', b)
+    b = re.sub(r'[\w.\-]+\s*\{[^}]*\}', ' ', b)
+    b = re.sub(r'\{[^}]*\}', ' ', b)
+    b = re.sub(r'https?://\S+', ' ', b)
+    return re.sub(r'\s+', ' ', b).strip()
+
+
+def _good_title(cand):
+    """A title is only accepted if it reads like a real, Title-Cased job title."""
+    if not cand:
+        return False
+    cand = re.sub(r'[^\w)\]]+$', '', cand.strip()).strip()
+    low = cand.lower()
+    if low in _STOP_TITLES:
+        return False
+    if len(cand) < 4 or len(cand) > 70:
+        return False
+    if low.split()[0] in _TITLE_BAD_FIRST:
+        return False
+    if not re.search(r'[A-Z]', cand):
+        return False
+    return _is_clean(cand, max_words=11)
+
+
+def _person_name(display):
+    return bool(re.match(r"^[A-Z][a-z]+ [A-Z][a-z]+$", display.strip()))
+
+
+def _company_from_sender2(sender):
+    """Company from sender, preferring an employer domain over a recruiter's
+    personal display name, and reading the subdomain for known ATS mail hosts."""
+    disp_m = re.match(r'^(.+?)\s*<', sender)
+    disp = disp_m.group(1).strip().strip('"\'') if disp_m else ''
+    addr = re.search(r'@([\w.\-]+)', sender)
+    domain = addr.group(1).lower() if addr else ''
+    for ats in _ATS_SUBDOMAIN:
+        if domain.endswith(ats):
+            sub = domain[:-len(ats)].strip('.').split('.')[-1]
+            if sub and len(sub) > 1 and sub not in ('mail', 'jobs', 'hr', 'noreply', 'no-reply', 'career', 'careers', 'apply', 'e', 'm'):
+                return sub.capitalize()
+    if disp and not _person_name(disp):
+        return _extract_company_from_sender(sender)
+    if domain:
+        parts = domain.replace('www.', '').split('.')
+        if len(parts) >= 2:
+            cand = parts[-2]
+            if len(cand) > 2 and cand not in ('mail', 'jobs', 'noreply', 'alerts', 'talentadore', 'talentlyft'):
+                return cand.capitalize()
+    return None
+
 
 # ── Helper utilities ──────────────────────────────────────────────────────────
 
@@ -424,77 +543,107 @@ def _parse_application(subject: str, body: str, sender: str):
     status: 'applied' | 'rejected'
     Returns (title, company, status) or (None, None, None) if not a job email.
     """
-    subj_lower = subject.lower()
-    body_lower = body[:2000].lower()
+    subj = subject.strip()
+    subj_lower = subj.lower()
+    from_lower = sender.lower()
 
-    # Must look like a job application email
-    if not any(kw in subj_lower or kw in body_lower for kw in APPLICATION_KEYWORDS):
+    # Drop alerts, marketing, notices and receipts outright
+    if any(s in from_lower for s in DROP_SENDER_SUBSTRINGS):
+        return None, None, None
+    if any(s in subj_lower for s in DROP_SUBJECT_SUBSTRINGS):
         return None, None, None
 
-    # Detect rejection
-    status = 'rejected' if _is_rejection(subject, body) else 'applied'
+    # Strip CSS/HTML so the prose patterns work on style-heavy emails
+    body = _clean_body(body)
 
+    # Must look like a job application email
+    if not any(kw in subj_lower or kw in body[:2000].lower() for kw in APPLICATION_KEYWORDS):
+        return None, None, None
+
+    status = 'rejected' if _is_rejection(subject, body) else 'applied'
     title, company = None, None
 
-    # Try subject patterns
-    for pattern, gtype in SUBJECT_PATTERNS:
-        m = pattern.search(subject)
-        if not m:
-            continue
-        groups = [g.strip().rstrip('.').strip() if g else '' for g in m.groups()]
+    # LinkedIn "your application was sent to COMPANY": the body reads
+    # "sent to <company> <title> <company> <location>", so the title sits
+    # between the two mentions of the company.
+    m = re.search(r'your application was sent to (.+)', subj, re.IGNORECASE)
+    if m:
+        company = m.group(1).strip()
+        co = re.escape(company)
+        bm = re.search(r'sent to\s+' + co + r'\s+(.+?)\s+' + co + r'\b', body, re.IGNORECASE)
+        if bm:
+            title = bm.group(1).strip()
 
-        if gtype == 'tc' and len(groups) >= 2:
-            title, company = groups[0], groups[1]
-        elif gtype == 'ct' and len(groups) >= 2:
-            company, title = groups[0], groups[1]
-        elif gtype == 't' and len(groups) >= 1:
-            title = groups[0]
-        elif gtype == 'c' and len(groups) >= 1:
-            company = groups[0]
-        break
-
-    # Body fallback for title
+    # Indeed "Indeed Application: TITLE" (company is not in these emails)
     if not title:
-        for pat in BODY_TITLE_PATTERNS:
-            m = pat.search(body[:1500])
-            if m:
-                title = m.group(1).strip().rstrip('.')[:80]
+        m = re.search(r'indeed application:\s*(.+)', subj, re.IGNORECASE)
+        if m:
+            title = m.group(1).strip()
+
+    # Generic subject patterns for ATS mail (also sets company)
+    if not (title and company):
+        for pattern, gtype in SUBJECT_PATTERNS:
+            m = pattern.search(subject)
+            if not m:
+                continue
+            groups = [g.strip().rstrip('.').strip() if g else '' for g in m.groups()]
+            if gtype == 'tc' and len(groups) >= 2:
+                title, company = title or groups[0], company or groups[1]
+            elif gtype == 'ct' and len(groups) >= 2:
+                company, title = company or groups[0], title or groups[1]
+            elif gtype == 't' and len(groups) >= 1:
+                title = title or groups[0]
+            elif gtype == 'c' and len(groups) >= 1:
+                company = company or groups[0]
+            break
+
+    # Body is the richest source of the title. Only accept clean, Title-Cased hits.
+    if not _good_title(title):
+        title = None
+        for pat in BODY_TITLE_PATTERNS_2:
+            mm = re.search(pat, body[:1200], re.IGNORECASE)
+            if mm and _good_title(mm.group(1)):
+                title = mm.group(1)
+                break
+    # Subject "applying for X" as a last resort (CSS-only bodies)
+    if not _good_title(title):
+        for pat in SUBJECT_TITLE_PATTERNS:
+            mm = re.search(pat, subj, re.IGNORECASE)
+            if mm and _good_title(mm.group(1)):
+                title = mm.group(1)
                 break
 
-    # Body fallback for company
+    # Company from body, then sender (person-name aware), never aggregator names
     if not company:
-        for pat in BODY_COMPANY_PATTERNS:
-            m = pat.search(body[:1500])
-            if m:
-                company = m.group(1).strip().rstrip('.')[:80]
+        for pat in BODY_COMPANY_PATTERNS_2:
+            mm = re.search(pat, body[:1200])
+            if mm:
+                company = mm.group(1).strip().rstrip('.').strip()
                 break
-
-    # Last resort: extract company from sender
-    if not company:
-        company = _extract_company_from_sender(sender)
+    if not company and not any(a in from_lower for a in AGGREGATOR_DOMAINS):
+        company = _company_from_sender2(sender)
 
     # Clean up
-    for val, name in [(title, 'title'), (company, 'company')]:
-        pass  # processed below
     if title:
         title = re.sub(r'\s+', ' ', title).strip()
-        # Strip trailing job-id patterns like "- R242570"
-        title = re.sub(r'\s*[-–]\s*[A-Z]\d{4,}$', '', title).strip()
+        title = re.sub(r'\s*[-–]\s*[A-Z]?\d{4,}$', '', title).strip()
+        title = re.sub(r'[^\w)\]]+$', '', title).strip()[:80]
     if company:
-        company = re.sub(r'\s+', ' ', company).strip()
+        company = re.sub(r'\s+', ' ', company).strip().strip('"\'').strip()
+        company = re.sub(r'^(?:workday[.\s]*admin|workday|myworkday)\s+', '',
+                         company, flags=re.IGNORECASE).strip()
 
-    # Validate, reject HTML/URL garbage
+    if company and any(j in company.lower() for j in COMPANY_JUNK_SUBSTRINGS):
+        company = None
     if not _is_clean(company):
         company = None
-    if not _is_clean(title):
+    if not _good_title(title):
         title = None
 
     if not company:
         return None, None, None
-
     if not title:
         title = 'Position (unknown)'
-
     return title, company, status
 
 
@@ -558,32 +707,39 @@ def _find_or_create_job(conn, title, company, source_account, job_url=None, mess
     """, (title, company))
     row = cursor.fetchone()
     if row:
-        # Backfill link and message_id if we now have them and didn't before
-        updates, args = [], []
+        # Backfill the link if we now have one and the row did not.
+        # (The live schema has no source_message_id column; email dedup is
+        # handled separately by the processed_emails table.)
         if job_url:
-            updates.append("link = COALESCE(NULLIF(link, ''), ?)")
-            args.append(job_url)
-        if message_id:
-            updates.append("source_message_id = COALESCE(NULLIF(source_message_id, ''), ?)")
-            args.append(message_id)
-        if updates:
-            args.append(row['id'])
-            conn.execute(f"UPDATE jobs SET {', '.join(updates)} WHERE id = ?", args)
+            conn.execute(
+                "UPDATE jobs SET link = COALESCE(NULLIF(link, ''), ?) WHERE id = ?",
+                (job_url, row['id']),
+            )
             conn.commit()
         return row['id']
 
-    cursor.execute("""
-        INSERT INTO jobs (job_title, company, description, link, source, relevance_score, seen_count, source_message_id)
-        VALUES (?, ?, ?, ?, ?, 0.0, 1, ?)
-        ON CONFLICT(job_title, company) DO UPDATE SET
-            seen_count = seen_count + 1,
-            extracted_date = CURRENT_TIMESTAMP
-    """, (title, company,
-          f'Applied via email tracker (from {source_account})',
-          job_url,
-          f'Email / {source_account}',
-          message_id))
-    conn.commit()
+    # Not found, so a plain INSERT is safe. No ON CONFLICT(job_title, company):
+    # the live jobs table has no unique constraint on that pair, it dedups on
+    # link / dedup_key. The one unique column is link, so guard against a
+    # collision there and fall back to the existing row if it happens.
+    try:
+        cursor.execute("""
+            INSERT INTO jobs (job_title, company, description, link, source,
+                              relevance_score, seen_count)
+            VALUES (?, ?, ?, ?, ?, 0.0, 1)
+        """, (title, company,
+              f'Applied via email tracker (from {source_account})',
+              job_url,
+              f'Email / {source_account}'))
+        conn.commit()
+    except sqlite3.IntegrityError:
+        # Duplicate link, reuse whatever row already owns it.
+        conn.rollback()
+        if job_url:
+            cursor.execute("SELECT id FROM jobs WHERE link = ? LIMIT 1", (job_url,))
+            hit = cursor.fetchone()
+            if hit:
+                return hit['id']
 
     cursor.execute("""
         SELECT id FROM jobs WHERE LOWER(job_title)=LOWER(?) AND LOWER(company)=LOWER(?) LIMIT 1
@@ -684,11 +840,15 @@ def _mark_processed(conn, message_id, subject, sender):
 
 # ── IMAP scanning ─────────────────────────────────────────────────────────────
 
-def _scan_account(gmail_user, gmail_password, days_back=90):
+def _scan_account(gmail_user, gmail_password, days_back=90, label=None):
     """
     Scan one Gmail account for job application emails.
     Uses Gmail's X-GM-RAW extension for full Gmail search syntax.
     Returns list of (title, company, date, message_id, subject, sender, status).
+
+    If `label` is given, every email identified as a real application is
+    tagged with that Gmail label (created on first use) so they group together
+    in the inbox. Labelling needs a read-write mailbox.
     """
     if not gmail_user or not gmail_password:
         logger.warning(f"[Tracker] No credentials for {gmail_user}, skipping")
@@ -703,10 +863,11 @@ def _scan_account(gmail_user, gmail_password, days_back=90):
         return []
 
     results = []
+    to_label = []  # IMAP ids of matched emails, tagged after the scan
     since_date = (datetime.now() - timedelta(days=days_back)).strftime('%Y/%m/%d')
 
     try:
-        mail.select('INBOX', readonly=True)
+        mail.select('INBOX', readonly=(label is None))
 
         # Run multiple simple SUBJECT searches and merge results
         since_imap = (datetime.now() - timedelta(days=days_back)).strftime('%d-%b-%Y')
@@ -746,9 +907,24 @@ def _scan_account(gmail_user, gmail_password, days_back=90):
                     job_url = _extract_job_url(msg)
                     results.append((title, company, datetime.now(), message_id,
                                     subject, sender, app_status, job_url))
+                    if label:
+                        to_label.append(msg_id)
 
             except Exception as e:
                 logger.debug(f"[Tracker] Error processing email: {e}")
+
+        # Tag matched emails with the Gmail label (created on first use)
+        if label and to_label:
+            gm_label = '"' + label.replace('"', '') + '"'
+            tagged = 0
+            for mid in to_label:
+                try:
+                    st, _ = mail.store(mid, '+X-GM-LABELS', gm_label)
+                    if st == 'OK':
+                        tagged += 1
+                except Exception as e:
+                    logger.debug(f"[Tracker] Label failed for {mid}: {e}")
+            logger.info(f"[Tracker] {gmail_user}: labelled {tagged} emails as {label}")
 
     except Exception as e:
         logger.error(f"[Tracker] IMAP error for {gmail_user}: {e}")
@@ -767,9 +943,11 @@ def _scan_account(gmail_user, gmail_password, days_back=90):
 
 # ── Main ──────────────────────────────────────────────────────────────────────
 
-def run_tracker(days_back=90):
+def run_tracker(days_back=90, gmail_label="Job Applications"):
     """
     Scan both Gmail accounts, extract job emails, update DB.
+    When gmail_label is set, matched emails are tagged with that Gmail label so
+    they group together in the inbox. Pass gmail_label=None to skip labelling.
     Returns list of dicts describing what was processed.
     """
     seen_users = set()
@@ -790,7 +968,7 @@ def run_tracker(days_back=90):
     rejected_ct = 0
 
     for user, password, label in accounts:
-        emails = _scan_account(user, password, days_back=days_back)
+        emails = _scan_account(user, password, days_back=days_back, label=gmail_label)
 
         for title, company, date, message_id, subject, sender, app_status, job_url in emails:
             if _is_processed(conn, message_id):
