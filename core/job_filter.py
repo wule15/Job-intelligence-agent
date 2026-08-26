@@ -156,15 +156,33 @@ def _is_eu_located(location: str, text: str) -> bool:
     return False
 
 
-def is_geo_restricted(job_title: str, job_description: str, location: str = '') -> bool:
+def is_geo_restricted(job_title: str, job_description: str, location: str = '',
+                      eligible_regions=None) -> bool:
     """Return True when the user could not legally take this job.
 
     Order: an explicit sponsorship / relocation offer or a worldwide / no-permit
     signal keeps the job; an explicit refusal to sponsor drops it; a hard lock
     (citizenship, or a US / UK / CA / AU region lock) drops it; a generic
-    work-authorization requirement drops it UNLESS the role is in the EU / EEA,
-    where the user can obtain a permit. Nothing stated is treated as open.
+    work-authorization requirement drops it UNLESS the role is in a region the
+    user can obtain a permit in. Nothing stated is treated as open.
+
+    eligible_regions: where the user can pursue work authorization. Defaults to
+    Config.WORK_ELIGIBLE_REGIONS (read from the user's .env). Accepted values:
+      - 'ANY' (or 'WORLDWIDE' / 'GLOBAL'): willing to pursue a permit anywhere,
+        so a role asking only for generic authorization is kept wherever it is.
+      - 'EU' / 'EEA': keep such a role only when it is EU/EEA-located.
+      - empty: strict, the generic public default, a role gated on local
+        authorization is kept only with explicit sponsorship or a worldwide /
+        remote signal, never on region membership.
+    A hard citizenship / residency lock (US citizens only, green card, EU
+    nationals only, ...) is never satisfiable and always drops, regardless of
+    this setting. This is what keeps the shared engine correct for any user.
     """
+    if eligible_regions is None:
+        from core.config import Config
+        eligible_regions = Config.WORK_ELIGIBLE_REGIONS
+    regions = {r.upper() for r in (eligible_regions or [])}
+
     text = (job_title + ' ' + job_description + ' ' + location).lower()
     no_sponsor = any(phrase in text for phrase in NO_SPONSOR_PHRASES)
     worldwide = any(phrase in text for phrase in GEO_ALLOW_PHRASES)
@@ -177,11 +195,15 @@ def is_geo_restricted(job_title: str, job_description: str, location: str = '') 
     if no_sponsor:
         return True  # explicitly will not sponsor, cannot take
     if any(phrase in text for phrase in GEO_HARD_LOCK_PHRASES):
-        return True  # citizenship or a non-EU region lock, no route
+        return True  # citizenship / residency lock, never satisfiable
     if any(phrase in text for phrase in GEO_SOFT_LOCK_PHRASES):
-        # Generic authorization requirement: takeable in the EU / EEA on a
-        # permit, not takeable elsewhere without sponsorship.
-        return not _is_eu_located(location, text)
+        # Generic authorization requirement. Kept if the user can pursue a
+        # permit where the role sits.
+        if regions & {'ANY', 'WORLDWIDE', 'GLOBAL'}:
+            return False  # willing to pursue authorization anywhere
+        if (regions & {'EU', 'EEA'}) and _is_eu_located(location, text):
+            return False
+        return True
     return False  # unstated, assume open
 
 # ── Blocked sources ───────────────────────────────────────────────────────────

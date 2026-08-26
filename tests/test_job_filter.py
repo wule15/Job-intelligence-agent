@@ -179,8 +179,12 @@ class TestScoring:
 
 
 class TestGeoRestriction:
-    def test_us_only_is_blocked(self):
-        assert is_geo_restricted('Engineer', 'Must be authorized to work in the US.', '')
+    def test_us_auth_is_blocked_under_strict_default(self):
+        """With no eligible regions (the public default), a role requiring US
+        work authorization and offering no sponsorship is dropped."""
+        assert is_geo_restricted(
+            'Engineer', 'Must be authorized to work in the US.', '',
+            eligible_regions=[])
 
     def test_allow_phrase_overrides_the_block(self):
         assert not is_geo_restricted(
@@ -192,36 +196,65 @@ class TestGeoRestriction:
     def test_empty_input_passes(self):
         assert not is_geo_restricted('', '', '')
 
+    # The EU loosening is opt-in per user, via eligible_regions (read from
+    # WORK_ELIGIBLE_REGIONS in .env). These pass it explicitly so the tests are
+    # deterministic regardless of the local .env.
+    EU = ['EU', 'EEA']
+
     def test_eu_role_with_generic_auth_requirement_is_kept(self):
-        """The EU loosening: an EU-located role that only asks for generic work
-        authorization is takeable on a permit / Blue Card, so it is kept."""
+        """An EU-eligible user: an EU-located role that only asks for generic
+        work authorization is takeable on a permit / Blue Card, so it is kept."""
         assert not is_geo_restricted(
             'Valve Engineer',
             'Must be authorized to work in Germany. Valve sizing and commissioning.',
-            'Frankfurt, Germany')
+            'Frankfurt, Germany', eligible_regions=self.EU)
 
     def test_eu_role_valid_work_permit_boilerplate_is_kept(self):
         assert not is_geo_restricted(
             'Process Engineer', 'A valid work permit is required for this role.',
-            'Copenhagen, Denmark')
+            'Copenhagen, Denmark', eligible_regions=self.EU)
+
+    def test_eu_role_blocked_when_not_eligible(self):
+        """The generic public default: with no eligible regions configured, the
+        same EU role is dropped. This is what keeps the shared engine correct
+        for a user who cannot work in the EU."""
+        assert is_geo_restricted(
+            'Valve Engineer', 'Must be authorized to work in Germany.',
+            'Frankfurt, Germany', eligible_regions=[])
 
     def test_us_role_generic_auth_still_blocked(self):
-        """Outside the EU the same generic requirement still drops the job."""
+        """Outside the eligible region the same generic requirement drops it,
+        even for an EU-eligible user."""
         assert is_geo_restricted(
             'Engineer', 'Must have the right to work in the United States.',
-            'Austin, TX')
+            'Austin, TX', eligible_regions=self.EU)
+
+    def test_any_region_keeps_generic_auth_anywhere(self):
+        """A user willing to pursue authorization anywhere ('ANY') keeps a
+        generic-authorization role wherever it sits, US included."""
+        assert not is_geo_restricted(
+            'Engineer', 'Must be authorized to work in the United States.',
+            'Austin, TX', eligible_regions=['ANY'])
+
+    def test_any_region_still_drops_citizenship_lock(self):
+        """'ANY' is not a magic pass: a hard citizenship lock still drops,
+        because it can never be satisfied."""
+        assert is_geo_restricted(
+            'Engineer', 'US citizens only.', 'Austin, TX', eligible_regions=['ANY'])
 
     def test_eu_citizenship_only_still_blocked(self):
         """Citizenship is not a permit: an EU-nationals-only lock still drops,
-        even for an EU-located role."""
+        even for an EU-located role and an EU-eligible user."""
         assert is_geo_restricted(
-            'Engineer', 'Open to EU nationals only.', 'Berlin, Germany')
+            'Engineer', 'Open to EU nationals only.', 'Berlin, Germany',
+            eligible_regions=self.EU)
 
     def test_generic_auth_no_location_stays_blocked(self):
         """With no location to place it in the EU, a bare authorization
         requirement is still treated as a block."""
         assert is_geo_restricted(
-            'Engineer', 'Must hold a valid work permit for this position.', '')
+            'Engineer', 'Must hold a valid work permit for this position.', '',
+            eligible_regions=self.EU)
 
 
 class TestNonEnglishTitles:
@@ -247,7 +280,9 @@ class TestFilterJobs:
         assert job_filter.filter_jobs(jobs, min_score=0) == []
 
     def test_geo_restricted_is_rejected(self, job_filter, make_job):
-        jobs = [make_job(description='Must be authorized to work in the US. Valve sizing.')]
+        # A hard citizenship lock always drops, independent of the configured
+        # eligible regions, so this exercises the rejection path deterministically.
+        jobs = [make_job(description='US citizens only. Valve sizing.')]
         assert job_filter.filter_jobs(jobs, min_score=0) == []
 
     def test_blocked_source_is_rejected(self, job_filter, make_job):

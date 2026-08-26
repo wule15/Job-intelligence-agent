@@ -115,6 +115,19 @@ class Config:
     # running in parallel can be told apart from the message alone.
     DIGEST_LABEL = os.getenv("DIGEST_LABEL", "")
 
+    # Regions where the user can obtain work authorization (a permit or, in the
+    # EU, a Blue Card), so a role there that asks only for generic authorization
+    # is takeable rather than dropped. Comma separated, e.g. "EU,EEA". Empty
+    # (the default) means strict eligibility: only an explicit sponsorship offer
+    # or a worldwide / remote / no-permit signal keeps an authorization-gated
+    # job. This is personal to the user, read from .env, never committed, so the
+    # public engine stays generic and each user sets their own real eligibility.
+    WORK_ELIGIBLE_REGIONS = [
+        r.strip().upper()
+        for r in os.getenv("WORK_ELIGIBLE_REGIONS", "").split(",")
+        if r.strip()
+    ]
+
     @classmethod
     def validate(cls):
         """Validate that all required credentials are present."""
