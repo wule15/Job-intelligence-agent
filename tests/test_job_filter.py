@@ -192,6 +192,37 @@ class TestGeoRestriction:
     def test_empty_input_passes(self):
         assert not is_geo_restricted('', '', '')
 
+    def test_eu_role_with_generic_auth_requirement_is_kept(self):
+        """The EU loosening: an EU-located role that only asks for generic work
+        authorization is takeable on a permit / Blue Card, so it is kept."""
+        assert not is_geo_restricted(
+            'Valve Engineer',
+            'Must be authorized to work in Germany. Valve sizing and commissioning.',
+            'Frankfurt, Germany')
+
+    def test_eu_role_valid_work_permit_boilerplate_is_kept(self):
+        assert not is_geo_restricted(
+            'Process Engineer', 'A valid work permit is required for this role.',
+            'Copenhagen, Denmark')
+
+    def test_us_role_generic_auth_still_blocked(self):
+        """Outside the EU the same generic requirement still drops the job."""
+        assert is_geo_restricted(
+            'Engineer', 'Must have the right to work in the United States.',
+            'Austin, TX')
+
+    def test_eu_citizenship_only_still_blocked(self):
+        """Citizenship is not a permit: an EU-nationals-only lock still drops,
+        even for an EU-located role."""
+        assert is_geo_restricted(
+            'Engineer', 'Open to EU nationals only.', 'Berlin, Germany')
+
+    def test_generic_auth_no_location_stays_blocked(self):
+        """With no location to place it in the EU, a bare authorization
+        requirement is still treated as a block."""
+        assert is_geo_restricted(
+            'Engineer', 'Must hold a valid work permit for this position.', '')
+
 
 class TestNonEnglishTitles:
     def test_german_title_is_flagged(self):

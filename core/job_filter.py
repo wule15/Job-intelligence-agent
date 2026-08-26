@@ -83,24 +83,45 @@ NO_SPONSOR_PHRASES = [
     'no relocation',
 ]
 
-# The job requires existing local work authorization. Country-agnostic
-# ("authorized to work in ...") plus the US / UK / EU / CA / AU residence locks.
-# Dropped UNLESS a sponsorship or worldwide phrase overrides.
-GEO_BLOCK_PHRASES = [
-    # existing authorization required (generic, any country)
+# HARD locks: a requirement the user can never satisfy, so the job is dropped
+# wherever it is. Citizenship or permanent residence (not obtainable on a work
+# permit), and the US / UK / CA / AU region locks (no realistic route for a
+# Serbian national). "EU citizens/nationals only" is a citizenship demand, which
+# a work permit or Blue Card does NOT satisfy, so it stays hard.
+GEO_HARD_LOCK_PHRASES = [
+    'must be a citizen', 'must be a permanent resident',
+    'us residents only', 'united states only', 'us only', 'us-based candidates only',
+    'us based candidates only', 'us citizens only', 'green card',
+    'eu citizens only', 'eu nationals only', 'uk residents only',
+    'right to work in the uk', 'canada only', 'canadian residents only',
+    'australia only',
+]
+
+# SOFT locks: a generic "you must be authorized to work here" requirement, no
+# country attached. Inside the EU / EEA a Serbian national has a realistic
+# permit / Blue Card route, so an EU-located role carrying this boilerplate is
+# takeable and kept. Outside the EU (or with no location to place it), the same
+# phrase still drops the job, no sponsorship route.
+GEO_SOFT_LOCK_PHRASES = [
     'must be authorized to work in', 'must be authorised to work in',
     'must have the right to work in', 'must be eligible to work in',
     'must be legally authorized to work', 'must be legally authorised to work',
     'work authorization required', 'work authorisation required',
     'must hold a valid work permit', 'valid work permit required',
     'must have existing work authorization',
-    'must be a citizen', 'must be a permanent resident',
-    # region locks
-    'us residents only', 'united states only', 'us only', 'us-based candidates only',
-    'us based candidates only', 'us citizens only', 'green card',
-    'eu citizens only', 'eu nationals only', 'uk residents only',
-    'right to work in the uk', 'canada only', 'canadian residents only',
-    'australia only',
+]
+
+# EU / EEA signals used to place a soft-locked role. Region words plus member
+# states, matched against the location field first (reliable), then the text as
+# a fallback. The Balkan-accession and no-permit signals live in
+# GEO_ALLOW_PHRASES already, this set only decides "is this role in the EU/EEA".
+EU_EEA_MARKERS = [
+    'european union', 'eea', 'schengen', 'europe', 'emea',
+    'austria', 'belgium', 'bulgaria', 'croatia', 'cyprus', 'czech', 'czechia',
+    'denmark', 'estonia', 'finland', 'france', 'germany', 'greece', 'hungary',
+    'ireland', 'italy', 'latvia', 'lithuania', 'luxembourg', 'malta',
+    'netherlands', 'poland', 'portugal', 'romania', 'slovakia', 'slovenia',
+    'spain', 'sweden', 'norway', 'iceland', 'liechtenstein',
 ]
 
 # Confirms worldwide / remote-global eligibility, or that no permit is needed.
@@ -115,12 +136,34 @@ GEO_ALLOW_PHRASES = [
 ]
 
 
-def is_geo_restricted(job_title: str, job_description: str, location: str = '') -> bool:
-    """Return True when the user could not legally take this job: it requires
-    existing local work authorization and offers no sponsorship.
+def _is_eu_located(location: str, text: str) -> bool:
+    """Return True when the role sits in the EU / EEA, where a Serbian national
+    has a realistic work-permit / Blue Card route.
 
-    A sponsorship / relocation offer, or a worldwide / remote-global / no-permit
-    signal, keeps the job. Nothing stated at all is treated as open, worth applying.
+    The location field is the reliable signal and is checked first. Only when it
+    is empty or unhelpful does this fall back to the full text, and even then it
+    ignores the broad region words (europe / emea), which turn up in unrelated
+    context ("we serve European markets") on jobs that are not actually in the EU.
+    """
+    loc = (location or '').lower()
+    if any(marker in loc for marker in EU_EEA_MARKERS):
+        return True
+    if not loc.strip() or loc in ('not stated', 'n/a', 'remote'):
+        # Country names only, not the region words, to avoid false positives.
+        countries = [m for m in EU_EEA_MARKERS if m not in ('europe', 'emea')]
+        if any(country in text for country in countries):
+            return True
+    return False
+
+
+def is_geo_restricted(job_title: str, job_description: str, location: str = '') -> bool:
+    """Return True when the user could not legally take this job.
+
+    Order: an explicit sponsorship / relocation offer or a worldwide / no-permit
+    signal keeps the job; an explicit refusal to sponsor drops it; a hard lock
+    (citizenship, or a US / UK / CA / AU region lock) drops it; a generic
+    work-authorization requirement drops it UNLESS the role is in the EU / EEA,
+    where the user can obtain a permit. Nothing stated is treated as open.
     """
     text = (job_title + ' ' + job_description + ' ' + location).lower()
     no_sponsor = any(phrase in text for phrase in NO_SPONSOR_PHRASES)
@@ -133,8 +176,12 @@ def is_geo_restricted(job_title: str, job_description: str, location: str = '') 
         return False  # sponsored, or worldwide / no permit needed, takeable
     if no_sponsor:
         return True  # explicitly will not sponsor, cannot take
-    if any(phrase in text for phrase in GEO_BLOCK_PHRASES):
-        return True  # needs existing authorization, no sponsorship, cannot take
+    if any(phrase in text for phrase in GEO_HARD_LOCK_PHRASES):
+        return True  # citizenship or a non-EU region lock, no route
+    if any(phrase in text for phrase in GEO_SOFT_LOCK_PHRASES):
+        # Generic authorization requirement: takeable in the EU / EEA on a
+        # permit, not takeable elsewhere without sponsorship.
+        return not _is_eu_located(location, text)
     return False  # unstated, assume open
 
 # ── Blocked sources ───────────────────────────────────────────────────────────

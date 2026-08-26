@@ -20,19 +20,18 @@ from core.utils import format_cv_label
 # MIN_DIGEST_SCORE against the CV profile. An unfilled slot means nothing
 # qualified, and the run says so rather than padding with weak matches.
 DIGEST_SIZE = 15
-ATS_SLOTS = 5
-AGGREGATOR_SLOTS = 5
 MAX_PER_COMPANY = 2
 
 # The separate direct-from-company digest. Kept small: it is a shortlist of
 # the highest-signal jobs, not a second full feed.
 DIRECT_DIGEST_SIZE = 10
 
-# Set equal to the storage cutoff on request: the digest sends everything worth
-# keeping rather than only the strongest matches, so a thin-supply day still
-# produces a digest instead of an empty one. Trade-off: lower-scoring jobs will
-# appear again. Raise this back toward 25 once supply improves.
-MIN_DIGEST_SCORE = 10
+# Held one step above the storage cutoff (MIN_RELEVANCE_SCORE = 10). Worth
+# keeping on the dashboard is a lower bar than worth a Telegram message: the
+# digest should trim the very weakest matches rather than send everything that
+# was stored. Kept modest (not the original 25) so a thin-supply day still
+# produces a digest. Raise toward 25 once supply improves.
+MIN_DIGEST_SCORE = 15
 
 # Company careers boards, read from their applicant tracking system. Held to
 # their own quota because they are the highest signal source and would
@@ -157,26 +156,34 @@ def init_telegram_tracking():
 
 def get_unsent_jobs(limit=DIGEST_SIZE, min_score=MIN_DIGEST_SCORE, is_live=None):
     """
-    Choose the day's digest: guaranteed slots, every slot earned on merit.
+    Choose the day's digest: a general pull of the best available jobs.
 
-    The old logic sorted by score and applied a per-source cap. With company
-    careers boards added, one large employer can list 200 roles and will win
-    that comparison every day, so the digest became one company plus noise.
+    This is the regular feed, and it is meant to read as a straight best-of
+    across every source. Company careers boards are NOT given a guaranteed
+    floor here: they compete on score like everything else. That keeps this
+    digest distinct from the separate direct-from-company digest (which is
+    company boards only), so the same role does not headline both messages.
 
-    Quotas fix the mix. The score gate keeps them honest: a quota is a
-    ceiling, never a floor. If only two company-board jobs clear the bar, you
-    get two, not two plus three bad ones. An empty slot is information.
+    Two rails are kept, because both prevent a real failure seen in practice:
+      - a per-company cap, so one employer listing 200 roles cannot fill the
+        digest with itself
+      - Indeed / JSearch held to a last-resort backfill, so their volume can
+        never crowd out the higher-signal sources
 
     Order of selection:
-      1. Jobs you saved by hand, always, ignoring both quota and score
-      2. Company careers boards, best first, capped per company
-      3. Quality aggregators, best first, capped per company
-      4. Wildcard from ATS + quality aggregators
-      5. Last resort: the demoted aggregators (Indeed / JSearch), only if the
+      1. Jobs you saved by hand, always, ignoring score
+      2. Best available by score from the preferred sources (company boards +
+         quality aggregators), capped per company
+      3. Last resort: the demoted aggregators (Indeed / JSearch), only if the
          digest is still short
 
-    Indeed and JSearch are held back to step 5 so they can never crowd out the
-    better sources. That is what stops a repeat of the all-Indeed digest.
+    The score gate keeps it honest: the cap is a ceiling, never a floor. If
+    only two jobs clear the bar, you get two, not two plus padding. An empty
+    slot is information.
+
+    Jobs already sent in the direct-from-company digest this run are excluded
+    by the telegram_sent_jobs table (the direct digest marks them sent before
+    this query runs), so a company job never appears in both messages.
 
     is_live: optional callable(url) -> bool. When given, a non-ATS candidate
     whose link it rejects is skipped as expired. ATS jobs bypass it: a company
@@ -245,43 +252,21 @@ def get_unsent_jobs(limit=DIGEST_SIZE, min_score=MIN_DIGEST_SCORE, is_live=None)
     # Everything else must clear the score bar to be eligible at all.
     qualified = [j for j in all_jobs if (j[3] or 0) >= min_score]
 
-    ats = [j for j in qualified if j[6] in ATS_SOURCES]
-    # The demoted aggregators are held out of the main passes entirely; they
-    # only get a look in the final last-resort fill below.
+    # A general pull of the best available, highest score first (all_jobs
+    # arrives already sorted by score DESC). Company boards and quality
+    # aggregators compete together on merit; only Indeed / JSearch are held
+    # back to a last-resort backfill so their volume cannot crowd out the rest.
+    preferred = [j for j in qualified if not is_low_priority_source(j[6])]
     low_priority = [j for j in qualified if is_low_priority_source(j[6])]
-    quality_agg = [j for j in qualified
-                   if j[6] not in ATS_SOURCES and not is_low_priority_source(j[6])]
 
-    quota_filled = {
-        'ATS boards': take(ats, ATS_SLOTS, MAX_PER_COMPANY),
-        'aggregators': take(quality_agg, AGGREGATOR_SLOTS, MAX_PER_COMPANY),
-    }
+    take(preferred, limit - len(selected), MAX_PER_COMPANY)
+    take(low_priority, limit - len(selected), MAX_PER_COMPANY)
 
-    # 4. Wildcard: best of what is left, but still only from the preferred
-    #    sources (ATS + quality aggregators). This absorbs an unfilled quota
-    #    without reaching for the demoted sources.
-    quota_filled['wildcard'] = take(ats + quality_agg, limit - len(selected), MAX_PER_COMPANY)
-
-    # 5. Last resort: the demoted Indeed / JSearch listings, only if the digest
-    #    is still short. On a healthy day with enough ATS and quality jobs this
-    #    takes nothing.
-    quota_filled['last_resort'] = take(low_priority, limit - len(selected), MAX_PER_COMPANY)
-
-    shortfall = {
-        name: expected - filled
-        for name, filled, expected in (
-            ('ATS boards', quota_filled['ATS boards'], ATS_SLOTS),
-            ('aggregators', quota_filled['aggregators'], AGGREGATOR_SLOTS),
-        )
-        if filled < expected
-    }
-    if shortfall:
-        # Either nothing cleared the score bar, or the per-company cap bit.
-        # Both are worth seeing: a chronically short board quota means the
-        # company list needs more entries.
-        print("[*] Quota not filled: "
-              + ', '.join(f"{name} short {n}" for name, n in shortfall.items())
-              + f" (score bar {min_score}, max {MAX_PER_COMPANY} per company)")
+    if len(selected) < limit:
+        # Short digest: little cleared the score bar, or the per-company cap
+        # bit. Worth seeing rather than padding the message with weak matches.
+        print(f"[*] Digest short: {len(selected)}/{limit} filled "
+              f"(score bar {min_score}, max {MAX_PER_COMPANY} per company)")
 
     # Keep the source column (job[6]) so the digest can show where each job came
     # from. Returns (id, title, company, score, link, best_cv, source) tuples.
@@ -457,6 +442,8 @@ def main():
     # up in both messages: the main digest only ever sees jobs not yet sent.
     print("[*] Fetching direct-from-company jobs...")
     direct = get_direct_jobs()
+    for job in direct:
+        print(f"[direct] id={job[0]} | {job[1]} | {job[2]}")
     direct_msg, direct_ids = format_direct_digest(direct)
     if direct_ids:
         print(f"[*] Sending {len(direct_ids)} direct-company jobs...")
@@ -472,6 +459,8 @@ def main():
     # Liveness check drops expired links from the aggregators before they reach
     # the digest. ATS jobs skip it inside get_unsent_jobs.
     jobs = get_unsent_jobs(limit=10, is_live=check_link_live)
+    for job in jobs:
+        print(f"[main] id={job[0]} | {job[1]} | {job[2]}")
 
     digest, job_ids = format_job_digest(jobs)
 
