@@ -76,16 +76,41 @@ class TestQuotas:
         bosch = [j for j in jobs if j[2] == 'Bosch']
         assert len(bosch) <= telegram_sender.MAX_PER_COMPANY
 
-    def test_ats_jobs_are_guaranteed_slots(self, db):
-        """Company boards must not be crowded out by aggregator volume."""
+    def test_regular_digest_is_a_general_pull_by_score(self, db):
+        """The regular feed is a best-of by score, not a guaranteed company-board
+        slot. Low-scoring company boards must not force their way in over
+        higher-scoring aggregator jobs; boards appear on merit, not by quota.
+        This is the behaviour the direct-from-company digest exists to cover,
+        so the two messages stay distinct."""
         for i in range(30):
             add(db, f'Aggregator Role {i}', f'Agency {i}', 90.0, 'Free')
         for i in range(5):
             add(db, f'Board Role {i}', f'Manufacturer {i}', 40.0, 'Workday')
 
-        jobs = telegram_sender.get_unsent_jobs()
-        ats = [j for j in jobs if j[2].startswith('Manufacturer')]
-        assert len(ats) >= telegram_sender.ATS_SLOTS
+        jobs = telegram_sender.get_unsent_jobs(limit=10)
+        assert len(jobs) == 10
+        assert all(j[3] == 90.0 for j in jobs)
+        assert not any(j[2].startswith('Manufacturer') for j in jobs)
+
+    def test_company_boards_still_appear_on_merit(self, db):
+        """Company boards are kept, not excluded: a high-scoring board job is
+        included in the general pull like any other source."""
+        add(db, 'Great Board Role', 'Flowserve', 85.0, 'Workday')
+        for i in range(5):
+            add(db, f'Aggregator Role {i}', f'Agency {i}', 60.0, 'Free')
+        jobs = telegram_sender.get_unsent_jobs(limit=10)
+        assert any(j[2] == 'Flowserve' for j in jobs)
+
+    def test_direct_fed_job_does_not_repeat_in_regular(self, db):
+        """The user-facing rule: a company job sent in the direct digest is
+        marked sent, so the regular digest never repeats it in the same run."""
+        jid = add(db, 'Board Role', 'Flowserve', 80.0, 'Workday')
+        add(db, 'Aggregator Role', 'Agency', 70.0, 'Free')
+        direct = telegram_sender.get_direct_jobs()
+        assert any(j[0] == jid for j in direct)
+        telegram_sender.mark_jobs_sent([jid])
+        jobs = telegram_sender.get_unsent_jobs(limit=10)
+        assert not any(j[0] == jid for j in jobs)
 
     def test_digest_never_exceeds_the_cap(self, db):
         for i in range(60):
