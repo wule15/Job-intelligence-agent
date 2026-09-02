@@ -12,7 +12,7 @@ from urllib.parse import urljoin, urlparse
 import requests
 
 from core.config import Config
-from core.job_filter import ALWAYS_INCLUDE_SOURCES, scam_risk
+from core.job_filter import ALWAYS_INCLUDE_SOURCES, matches_region, scam_risk
 from core.utils import format_cv_label
 
 # ── Digest composition ───────────────────────────────────────────────────────
@@ -321,6 +321,59 @@ def get_direct_jobs(limit=DIRECT_DIGEST_SIZE, min_score=MIN_DIGEST_SCORE):
 
     return [job[:8] for job in selected]
 
+def get_regional_jobs(limit=DIGEST_SIZE, min_score=MIN_DIGEST_SCORE):
+    """
+    The home-market shortlist: unsent jobs whose location matches the user's
+    region terms, best first, capped per company.
+
+    Region terms come from Config.REGIONAL_MATCH_TERMS (falling back to
+    REGIONAL_JOB_LOCATIONS). Both are empty in the public default, so this
+    returns nothing and the third message never appears until the user sets
+    them in their .env. That keeps the shared engine generic while giving the
+    user a dedicated feed for jobs the global sources under-serve (e.g. the
+    Balkans, which Adzuna does not cover).
+
+    Same score gate and per-company cap as the other digests. Returns
+    (id, title, company, score, link, best_cv, source, scam_risk) tuples.
+    """
+    terms = Config.REGIONAL_MATCH_TERMS or Config.REGIONAL_JOB_LOCATIONS
+    if not terms:
+        return []
+    try:
+        conn = sqlite3.connect(Config.DATABASE_PATH)
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT id, job_title, company, relevance_score, link, best_cv, source,
+                   scam_risk, location
+            FROM jobs
+            WHERE id NOT IN (SELECT job_id FROM telegram_sent_jobs)
+              AND relevance_score >= ?
+              AND location IS NOT NULL AND location != ''
+            ORDER BY relevance_score DESC, extracted_date DESC
+            LIMIT 400
+        """, (min_score,))
+        rows = cursor.fetchall()
+        conn.close()
+    except Exception as e:
+        print(f"[!] Error fetching regional jobs: {type(e).__name__}: {e}")
+        return []
+
+    selected = []
+    company_counts = defaultdict(int)
+    for job in rows:
+        if len(selected) >= limit:
+            break
+        if not matches_region(job[8], terms):
+            continue
+        company = (job[2] or 'Unknown').strip().lower()
+        if company_counts[company] >= MAX_PER_COMPANY:
+            continue
+        # Drop the location column so the tuple matches the shared renderer.
+        selected.append(job[:8])
+        company_counts[company] += 1
+
+    return selected
+
 def mark_jobs_sent(job_ids):
     """Mark jobs as sent in Telegram."""
     try:
@@ -433,6 +486,26 @@ def format_direct_digest(jobs):
     message += _render_job_lines(jobs)
     return message, job_ids
 
+def format_regional_digest(jobs):
+    """
+    Format the home-market (regional) digest for Telegram.
+
+    Returns (message, job_ids). job_ids is empty when there is nothing to send,
+    which the caller reads as "skip this message" rather than posting a filler
+    note every day.
+    """
+    if not jobs:
+        return "", []
+
+    label = f" {Config.DIGEST_LABEL}" if Config.DIGEST_LABEL else ""
+    header = Config.REGIONAL_DIGEST_LABEL or "Regional jobs"
+    job_ids = [job[0] for job in jobs]
+    message = f"🌍 <b>{header}</b>{label}\n"
+    message += f"<i>{datetime.now().strftime('%Y-%m-%d %H:%M')}</i>\n\n"
+    message += f"<b>{len(jobs)}</b> from your region:\n\n"
+    message += _render_job_lines(jobs)
+    return message, job_ids
+
 def main():
     print("[*] Initializing Telegram tracking...")
     init_telegram_tracking()
@@ -454,6 +527,24 @@ def main():
             print("[!] Direct digest failed to send - not marking those jobs sent")
     else:
         print("[*] No direct-from-company jobs today")
+
+    # Regional (home-market) digest goes next, and like the direct one marks its
+    # jobs sent before the main digest is selected, so a regional job is never
+    # repeated in the general feed. Inert unless the user set the region terms.
+    print("[*] Fetching regional jobs...")
+    regional = get_regional_jobs()
+    for job in regional:
+        print(f"[regional] id={job[0]} | {job[1]} | {job[2]}")
+    regional_msg, regional_ids = format_regional_digest(regional)
+    if regional_ids:
+        print(f"[*] Sending {len(regional_ids)} regional jobs...")
+        if send_telegram_message(regional_msg):
+            print(f"[+] Marking {len(regional_ids)} regional jobs as sent...")
+            mark_jobs_sent(regional_ids)
+        else:
+            print("[!] Regional digest failed to send - not marking those jobs sent")
+    else:
+        print("[*] No regional jobs today")
 
     print("[*] Fetching unsent jobs...")
     # Liveness check drops expired links from the aggregators before they reach

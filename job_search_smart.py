@@ -418,6 +418,7 @@ class SmartJobSearcher:
                     relevance_score=job.get('relevance_score', 0),
                     best_cv=job.get('best_cv'),
                     scam_risk=job.get('scam_risk', False),
+                    location=job.get('location'),
                 )
                 # Mark link as seen so we don't re-process old re-listings
                 if job.get('link'):

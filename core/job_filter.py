@@ -136,6 +136,20 @@ GEO_ALLOW_PHRASES = [
 ]
 
 
+def matches_region(location, terms):
+    """True when the job's location contains any of the region terms.
+
+    Case-insensitive substring match. Used by the regional Telegram digest to
+    pick out home-market jobs (e.g. the Balkans) from stored listings. Empty
+    location or empty terms means no match, so the feature is inert until the
+    user sets REGIONAL_MATCH_TERMS in their .env.
+    """
+    if not location or not terms:
+        return False
+    loc = location.lower()
+    return any(t.lower() in loc for t in terms)
+
+
 def _is_eu_located(location: str, text: str) -> bool:
     """Return True when the role sits in the EU / EEA, where a Serbian national
     has a realistic work-permit / Blue Card route.

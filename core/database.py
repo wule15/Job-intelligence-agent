@@ -83,6 +83,7 @@ class Database:
                 ('seen_count', 'INTEGER DEFAULT 1'),
                 ('dedup_key', 'TEXT'),
                 ('scam_risk', 'INTEGER DEFAULT 0'),
+                ('location', 'TEXT'),
             ]:
                 try:
                     cursor.execute(f'ALTER TABLE jobs ADD COLUMN {col} {definition}')
@@ -249,12 +250,14 @@ class Database:
         print("[+] Database initialized successfully")
 
     def add_job(self, job_title, company, description, link, salary=None, source=None,
-                relevance_score=0.0, best_cv=None, scam_risk=0):
+                relevance_score=0.0, best_cv=None, scam_risk=0, location=None):
         """
         Insert a new job or update an existing one (same title+company).
         On duplicate: increments seen_count, refreshes extracted_date so the
         dashboard shows it as active today, and updates score/cv if improved.
         The scam_risk flag is sticky: once a listing is flagged it stays flagged.
+        location is backfilled on conflict only when the stored row has none, so
+        a later sighting can supply it without overwriting a good value.
         Returns job_id always.
         """
         try:
@@ -263,8 +266,8 @@ class Database:
             cursor.execute('''
                 INSERT INTO jobs
                     (job_title, company, description, link, salary, source,
-                     relevance_score, best_cv, seen_count, dedup_key, scam_risk)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
+                     relevance_score, best_cv, seen_count, dedup_key, scam_risk, location)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?)
                 ON CONFLICT(dedup_key) DO UPDATE SET
                     seen_count    = seen_count + 1,
                     extracted_date = CURRENT_TIMESTAMP,
@@ -274,9 +277,13 @@ class Database:
                     best_cv = CASE
                         WHEN excluded.relevance_score > relevance_score
                         THEN excluded.best_cv ELSE best_cv END,
-                    scam_risk = CASE WHEN excluded.scam_risk = 1 THEN 1 ELSE scam_risk END
+                    scam_risk = CASE WHEN excluded.scam_risk = 1 THEN 1 ELSE scam_risk END,
+                    location = CASE
+                        WHEN (location IS NULL OR location = '')
+                             AND excluded.location IS NOT NULL AND excluded.location != ''
+                        THEN excluded.location ELSE location END
             ''', (job_title, company, description, link, salary, source,
-                  relevance_score, best_cv, key, 1 if scam_risk else 0))
+                  relevance_score, best_cv, key, 1 if scam_risk else 0, location))
             self.connection.commit()
             # Return the id whether it was inserted or updated
             if cursor.lastrowid:

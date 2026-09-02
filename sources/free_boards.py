@@ -12,11 +12,14 @@ Replaces JSearch (paid/quota-limited) with:
 - Jooble (global aggregator, free API key required, JOOBLE_API_KEY)
 """
 
+import json
 import os
+import re
 import xml.etree.ElementTree as ET
 import requests
 import time
 from datetime import datetime
+from urllib.parse import quote
 from core.utils import setup_logging
 
 logger = setup_logging('sources.free_boards')
@@ -477,6 +480,98 @@ def search_jooble(query, location='remote'):
     return jobs
 
 
+# ── Infostud (poslovi.infostud.com), Serbia ───────────────────────────────────
+
+INFOSTUD_SEARCH = "https://poslovi.infostud.com/oglasi-za-posao-{q}"
+
+
+def _extract_next_data(html):
+    """Return the Next.js __NEXT_DATA__ JSON from a page as a dict, or None.
+
+    Next.js ships the page's data in a <script id="__NEXT_DATA__"> tag. Reading
+    that is the app's own data contract and far more stable than scraping HTML
+    classes that change with every redesign.
+    """
+    m = re.search(
+        r'<script id="__NEXT_DATA__"[^>]*>(.*?)</script>', html, re.S)
+    if not m:
+        return None
+    try:
+        return json.loads(m.group(1))
+    except Exception:
+        return None
+
+
+def _parse_infostud_jobs(data):
+    """Turn a parsed Infostud __NEXT_DATA__ dict into job dicts. Pure and
+    offline-testable, so the network fetch and the parsing can be tested apart.
+
+    Every Infostud result is in Serbia, so the location is stamped ", Serbia".
+    That way the regional digest matches it on the country term regardless of
+    which city (Vranje, Subotica, ...) the listing names.
+    """
+    try:
+        primary = data['props']['pageProps']['initialSearchResults']['jobs']['primary']
+    except (KeyError, TypeError):
+        return []
+    jobs = []
+    for it in primary or []:
+        title = (it.get('title') or '').strip()
+        if not title:
+            continue
+        city = (it.get('location') or '').strip()
+        location = f"{city}, Serbia" if city else "Serbia"
+        # Some fields (jobSummary) come back as nested objects, not strings.
+        # Take the snippet only when it is plainly a string, else leave empty.
+        desc = it.get('textAdSnippet')
+        if not isinstance(desc, str):
+            desc = ''
+        salary = it.get('salary')
+        if not isinstance(salary, str):
+            salary = None
+        jobs.append(_job(
+            title=title,
+            company=(it.get('companyName') or '').strip(),
+            description=desc,
+            link=it.get('url') or '',
+            salary=salary,
+            location=location,
+            source='Infostud'))
+    return jobs
+
+
+def search_infostud(query, pages=1):
+    """
+    Infostud (poslovi.infostud.com), Serbia's largest job board. No public API,
+    so we read the Next.js __NEXT_DATA__ JSON the listing page ships. This also
+    covers HelloWorld.rs IT listings, since both are Infostud-group sites and
+    HelloWorld jobs surface in Infostud results, so a separate HelloWorld
+    scraper would be redundant. Free, no key.
+    """
+    jobs = []
+    q = quote(query.strip().replace(' ', '-'))
+    logger.info(f"[Infostud] Searching: {query!r}")
+    for page in range(1, pages + 1):
+        url = INFOSTUD_SEARCH.format(q=q)
+        if page > 1:
+            url += f"?page={page}"
+        try:
+            r = requests.get(url, headers=HEADERS, timeout=TIMEOUT)
+            if r.status_code != 200:
+                logger.warning(f"[Infostud] HTTP {r.status_code} for '{query}'")
+                break
+        except Exception as e:
+            logger.warning(f"[Infostud] request failed for '{query}': {type(e).__name__}")
+            break
+        page_jobs = _parse_infostud_jobs(_extract_next_data(r.text) or {})
+        if not page_jobs:
+            break
+        jobs.extend(page_jobs)
+        time.sleep(0.5)
+    logger.info(f"[Infostud] Found {len(jobs)} jobs for '{query}'")
+    return jobs
+
+
 # ── Bundesagentur für Arbeit (German Federal Employment Agency) ────────────────
 
 def search_bundesagentur(query, size=25):
@@ -681,6 +776,39 @@ class FreeJobSearcher:
                     time.sleep(0.3)
                 except Exception as e:
                     logger.warning(f"Jooble {loc} skipped for '{q}': {e}")
+
+        # 10c. Regional coverage via Jooble, driven by the user's private config
+        #      (REGIONAL_JOB_LOCATIONS in .env, empty by default so the public
+        #      engine adds nothing here). Country names work best in Jooble
+        #      ("Serbia", not "Beograd"). This is what surfaces the home market,
+        #      e.g. the Balkans, that Adzuna does not cover. The work-eligibility
+        #      filter keeps these (Serbia/Bosnia/Montenegro are no-permit).
+        from core.config import Config as _RegionCfg
+        for loc in _RegionCfg.REGIONAL_JOB_LOCATIONS:
+            for q in queries[:4]:
+                try:
+                    all_jobs.extend(search_jooble(q, location=loc))
+                    time.sleep(0.3)
+                except Exception as e:
+                    logger.warning(f"Jooble regional {loc} skipped for '{q}': {e}")
+
+        # 10d. Dedicated regional job boards, driven by REGIONAL_BOARDS in the
+        #      user's .env (empty by default, so the public engine adds nothing).
+        #      These read a local board's own structured data, for coverage the
+        #      global aggregators under-serve. Add a board by writing a search_*
+        #      function and registering it in BOARD_DISPATCH.
+        BOARD_DISPATCH = {'infostud': search_infostud}
+        for name in _RegionCfg.REGIONAL_BOARDS:
+            fn = BOARD_DISPATCH.get(name.strip().lower())
+            if not fn:
+                logger.warning(f"Unknown regional board '{name}', skipping")
+                continue
+            for q in queries[:4]:
+                try:
+                    all_jobs.extend(fn(q))
+                    time.sleep(0.3)
+                except Exception as e:
+                    logger.warning(f"Board {name} skipped for '{q}': {e}")
 
         # 11. Bundesagentur, German Federal Employment Agency. German role terms
         #     find the most; the user's English queries also return results.
