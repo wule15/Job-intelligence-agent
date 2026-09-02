@@ -339,19 +339,29 @@ def get_regional_jobs(limit=DIGEST_SIZE, min_score=MIN_DIGEST_SCORE):
     terms = Config.REGIONAL_MATCH_TERMS or Config.REGIONAL_JOB_LOCATIONS
     if not terms:
         return []
+    # Match the region IN the query, not only in Python afterwards. If we took
+    # the top 400 unsent jobs by score first and filtered after, a backlog of
+    # higher-scoring non-region jobs could fill that whole window and hide every
+    # lower-scoring region job, leaving this digest empty though qualifying jobs
+    # exist (the direct digest avoids this by filtering source in SQL). The LIKE
+    # clauses keep the candidate set to region jobs so the score order and LIMIT
+    # apply within them; matches_region() below is still the authoritative check.
+    like_clauses = ' OR '.join('LOWER(location) LIKE ?' for _ in terms)
+    like_params = [f'%{t.lower()}%' for t in terms]
     try:
         conn = sqlite3.connect(Config.DATABASE_PATH)
         cursor = conn.cursor()
-        cursor.execute("""
+        cursor.execute(f"""
             SELECT id, job_title, company, relevance_score, link, best_cv, source,
                    scam_risk, location
             FROM jobs
             WHERE id NOT IN (SELECT job_id FROM telegram_sent_jobs)
               AND relevance_score >= ?
               AND location IS NOT NULL AND location != ''
+              AND ({like_clauses})
             ORDER BY relevance_score DESC, extracted_date DESC
             LIMIT 400
-        """, (min_score,))
+        """, (min_score, *like_params))
         rows = cursor.fetchall()
         conn.close()
     except Exception as e:

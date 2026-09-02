@@ -63,7 +63,8 @@ class Database:
                     best_cv TEXT,
                     seen_count INTEGER DEFAULT 1,
                     dedup_key TEXT,
-                    scam_risk INTEGER DEFAULT 0
+                    scam_risk INTEGER DEFAULT 0,
+                    location TEXT
                 )
             ''')
             cursor.execute('''

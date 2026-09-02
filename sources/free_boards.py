@@ -517,7 +517,8 @@ def _parse_infostud_jobs(data):
     jobs = []
     for it in primary or []:
         title = (it.get('title') or '').strip()
-        if not title:
+        link = (it.get('url') or '').strip()
+        if not title or not link:
             continue
         city = (it.get('location') or '').strip()
         location = f"{city}, Serbia" if city else "Serbia"
@@ -533,7 +534,7 @@ def _parse_infostud_jobs(data):
             title=title,
             company=(it.get('companyName') or '').strip(),
             description=desc,
-            link=it.get('url') or '',
+            link=link,
             salary=salary,
             location=location,
             source='Infostud'))
@@ -549,7 +550,7 @@ def search_infostud(query, pages=1):
     scraper would be redundant. Free, no key.
     """
     jobs = []
-    q = quote(query.strip().replace(' ', '-'))
+    q = quote(query.strip().replace(' ', '-'), safe='')
     logger.info(f"[Infostud] Searching: {query!r}")
     for page in range(1, pages + 1):
         url = INFOSTUD_SEARCH.format(q=q)
