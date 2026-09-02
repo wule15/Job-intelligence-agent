@@ -128,6 +128,30 @@ class Config:
         if r.strip()
     ]
 
+    # Regional job search. Personal customization, read from .env, empty in the
+    # public default so the shared engine stays generic. Two separate lists so
+    # sourcing and digest matching can differ:
+    #   REGIONAL_JOB_LOCATIONS drives extra Jooble location queries. Use country
+    #     names, which Jooble matches best, e.g. "Serbia,Montenegro".
+    #   REGIONAL_MATCH_TERMS decides which stored jobs go in the regional Telegram
+    #     digest, matched as a case-insensitive substring against the job's
+    #     location. Add city names too for reliable matching, e.g.
+    #     "serbia,beograd,sarajevo". Falls back to REGIONAL_JOB_LOCATIONS if unset.
+    # REGIONAL_DIGEST_LABEL is the header shown on that third message.
+    REGIONAL_JOB_LOCATIONS = [
+        s.strip() for s in os.getenv("REGIONAL_JOB_LOCATIONS", "").split(",") if s.strip()
+    ]
+    REGIONAL_MATCH_TERMS = [
+        s.strip() for s in os.getenv("REGIONAL_MATCH_TERMS", "").split(",") if s.strip()
+    ]
+    REGIONAL_DIGEST_LABEL = os.getenv("REGIONAL_DIGEST_LABEL", "Regional jobs")
+    # Dedicated regional job boards to scrape, comma separated, matched to a
+    # search_* function in sources/free_boards.py BOARD_DISPATCH (e.g.
+    # "infostud"). Empty by default so the public engine scrapes no local board.
+    REGIONAL_BOARDS = [
+        s.strip() for s in os.getenv("REGIONAL_BOARDS", "").split(",") if s.strip()
+    ]
+
     @classmethod
     def validate(cls):
         """Validate that all required credentials are present."""
