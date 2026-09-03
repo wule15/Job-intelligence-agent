@@ -5,8 +5,25 @@ Utility functions for logging, file operations, and helpers.
 import logging
 import logging.handlers
 import re
+import sys
 from pathlib import Path
 from core.config import Config
+
+
+def force_utf8_streams():
+    """Make stdout/stderr UTF-8 so a diagnostic print or log of non-ASCII job
+    data (e.g. Serbian titles) cannot crash a run under a Windows cp1252 console
+    or a redirected log. Both entry points (job_search_smart, telegram_sender)
+    call this before they print. Idempotent; a stream without .reconfigure
+    (pytest capture, StringIO) is left as is. reconfigure mutates the stream in
+    place, so handlers already bound to it (the logging StreamHandler) benefit too.
+    """
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(encoding='utf-8', errors='replace')
+        except Exception:
+            pass
+
 
 def setup_logging(name=__name__, log_file=None):
     """Setup rotating file logger."""
@@ -21,7 +38,8 @@ def setup_logging(name=__name__, log_file=None):
     file_handler = logging.handlers.RotatingFileHandler(
         log_file,
         maxBytes=Config.LOG_MAX_BYTES,
-        backupCount=Config.LOG_BACKUP_COUNT
+        backupCount=Config.LOG_BACKUP_COUNT,
+        encoding='utf-8'
     )
 
     # Console handler
