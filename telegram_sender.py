@@ -4,6 +4,7 @@
 import ipaddress
 import socket
 import sqlite3
+import sys
 from collections import defaultdict
 from datetime import datetime
 from functools import lru_cache
@@ -14,6 +15,17 @@ import requests
 from core.config import Config
 from core.job_filter import ALWAYS_INCLUDE_SOURCES, matches_region, scam_risk
 from core.utils import format_cv_label
+
+# On Windows the console (and a redirected log) default to cp1252, which raises
+# UnicodeEncodeError on Serbian characters (c, s, z with diacritics) coming from
+# regional job titles. A diagnostic print must never be able to abort the run,
+# so make stdout/stderr tolerant. The Telegram send itself is UTF-8 and was
+# always fine; only the local prints were at risk.
+for _stream in (sys.stdout, sys.stderr):
+    try:
+        _stream.reconfigure(encoding='utf-8', errors='replace')
+    except Exception:
+        pass
 
 # ── Digest composition ───────────────────────────────────────────────────────
 # Slots are a ceiling, not a floor. A job only occupies one if it clears
