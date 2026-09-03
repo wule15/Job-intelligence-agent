@@ -19,7 +19,7 @@ from core.job_validator import JobValidator
 from core.job_normalize import canonical_url, dedup_key, find_near_duplicates
 from core.database import Database
 from core.config import Config
-from core.utils import setup_logging
+from core.utils import setup_logging, force_utf8_streams
 from core import source_health
 logger = setup_logging('job_search_smart')
 
@@ -489,6 +489,7 @@ class SmartJobSearcher:
 
 def main():
     """Run smart job search."""
+    force_utf8_streams()  # Serbian job titles must not crash a cp1252 console/log
     try:
         searcher = SmartJobSearcher()
         jobs = searcher.search_all_sources()

@@ -56,6 +56,21 @@ def _job(title, company, description, link, salary=None, location='Remote', sour
     }
 
 
+# Cap on how many queries the regional passes fan out. Each query runs against
+# every configured regional location and board, so an unbounded REGIONAL_QUERIES
+# would multiply into a request/quota blowout. 12 comfortably fits a bilingual
+# EN+local set while bounding the worst case.
+REGIONAL_QUERY_CAP = 12
+
+
+def _pick_regional_queries(regional, cv_queries):
+    """Queries for the regional passes: the user's configured REGIONAL_QUERIES if
+    set (capped), else the top few CV-derived queries. The cap is applied to the
+    configured list too, not only the fallback, so a long list cannot blow up the
+    request count."""
+    return list(regional)[:REGIONAL_QUERY_CAP] or list(cv_queries)[:4]
+
+
 # ── RemoteOK ──────────────────────────────────────────────────────────────────
 
 def search_remoteok(keywords):
@@ -786,8 +801,9 @@ class FreeJobSearcher:
         #      filter keeps these (Serbia/Bosnia/Montenegro are no-permit).
         from core.config import Config as _RegionCfg
         # Prefer the configured regional queries (steadier across languages, see
-        # Config.REGIONAL_QUERIES); fall back to the CV-derived queries.
-        regional_queries = _RegionCfg.REGIONAL_QUERIES or list(queries)[:4]
+        # Config.REGIONAL_QUERIES); fall back to the CV-derived queries. Capped so
+        # a long configured list cannot blow up the per-run request count.
+        regional_queries = _pick_regional_queries(_RegionCfg.REGIONAL_QUERIES, queries)
         for loc in _RegionCfg.REGIONAL_JOB_LOCATIONS:
             for q in regional_queries:
                 try:
