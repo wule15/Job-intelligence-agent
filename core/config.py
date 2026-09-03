@@ -151,6 +151,16 @@ class Config:
     REGIONAL_BOARDS = [
         s.strip() for s in os.getenv("REGIONAL_BOARDS", "").split(",") if s.strip()
     ]
+    # Queries used specifically for the regional sourcing passes (Jooble by
+    # location, and the local boards). Comma separated. Empty by default, then
+    # the passes fall back to the normal CV-derived queries. This exists because
+    # a location aggregator can be language-sensitive: Jooble Bosnia returns
+    # results for "engineer" but nothing for "inzenjer", so a fixed set of broad
+    # role terms (mixing English and local) gives steadier regional coverage
+    # than whatever the CV happens to produce. Personal, read from .env.
+    REGIONAL_QUERIES = [
+        s.strip() for s in os.getenv("REGIONAL_QUERIES", "").split(",") if s.strip()
+    ]
 
     @classmethod
     def validate(cls):

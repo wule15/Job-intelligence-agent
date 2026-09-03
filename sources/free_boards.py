@@ -785,8 +785,11 @@ class FreeJobSearcher:
         #      e.g. the Balkans, that Adzuna does not cover. The work-eligibility
         #      filter keeps these (Serbia/Bosnia/Montenegro are no-permit).
         from core.config import Config as _RegionCfg
+        # Prefer the configured regional queries (steadier across languages, see
+        # Config.REGIONAL_QUERIES); fall back to the CV-derived queries.
+        regional_queries = _RegionCfg.REGIONAL_QUERIES or list(queries)[:4]
         for loc in _RegionCfg.REGIONAL_JOB_LOCATIONS:
-            for q in queries[:4]:
+            for q in regional_queries:
                 try:
                     all_jobs.extend(search_jooble(q, location=loc))
                     time.sleep(0.3)
@@ -804,7 +807,7 @@ class FreeJobSearcher:
             if not fn:
                 logger.warning(f"Unknown regional board '{name}', skipping")
                 continue
-            for q in queries[:4]:
+            for q in regional_queries:
                 try:
                     all_jobs.extend(fn(q))
                     time.sleep(0.3)
