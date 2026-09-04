@@ -304,10 +304,19 @@ class SmartJobSearcher:
             r.jobs = self.linkedin.search_all(specific_queries[:5], pages=2)
         results.append(r)
 
-        # 5. SerpAPI, Google Jobs. Needs SERPAPI_KEY, skipped without one.
-        print(f"\n[*] Searching Google Jobs via SerpAPI...")
-        with source_health.track('SerpAPI', queries=len(specific_queries[:5])) as r:
-            r.jobs = self.serpapi.search_all(specific_queries[:5])
+        # 5. SerpAPI, Google Jobs, localised per configured country market.
+        #    Needs SERPAPI_KEY, skipped without one. Google Jobs returns nothing
+        #    for a bare query, so each market (Config.SERPAPI_COUNTRIES) is
+        #    queried with its own gl/domain/hl. Budget-capped
+        #    (Config.SERPAPI_BUDGET) to stay within the monthly quota.
+        print(f"\n[*] Searching Google Jobs via SerpAPI "
+              f"({len(Config.SERPAPI_COUNTRIES)} markets, budget {Config.SERPAPI_BUDGET})...")
+        with source_health.track('SerpAPI', queries=Config.SERPAPI_BUDGET) as r:
+            r.jobs = self.serpapi.search_all(
+                specific_queries,
+                countries=Config.SERPAPI_COUNTRIES,
+                budget=Config.SERPAPI_BUDGET,
+            )
         results.append(r)
 
         # 6. Apify, LinkedIn and Indeed with full descriptions, metered
