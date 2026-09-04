@@ -100,6 +100,13 @@ class Config:
         s.strip().lower() for s in os.getenv("SERPAPI_COUNTRIES", "").split(",") if s.strip()
     ]
     SERPAPI_BUDGET = int(os.getenv("SERPAPI_BUDGET", "6"))
+    # Curated queries for the SerpApi market passes. Google Jobs is query
+    # sensitive (broad engineering nouns return, many phrasings return nothing),
+    # so a fixed list of terms known to hit beats whatever the CV happens to
+    # rank first. Comma separated; empty falls back to the CV-derived queries.
+    SERPAPI_QUERIES = [
+        s.strip() for s in os.getenv("SERPAPI_QUERIES", "").split(",") if s.strip()
+    ]
 
     # Logging Configuration
     LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")

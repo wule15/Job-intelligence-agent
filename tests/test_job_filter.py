@@ -20,8 +20,45 @@ from core.job_filter import (  # noqa: E402
     US_LOCATION_PENALTY,
     TITLE_BOOST_MULTIPLIER,
     scam_risk,
+    sponsorship_multiplier,
+    SPONSORSHIP_BOOST,
     JobFilter,
 )
+
+
+class TestSponsorshipUprank:
+    """Roles that explicitly offer visa sponsorship are surfaced higher, never
+    dropped. Postings rarely state sponsorship even when open to it, so this is
+    a ranking boost, not a filter."""
+
+    def test_multiplier_lifts_a_sponsoring_job(self):
+        assert sponsorship_multiplier(
+            {'description': 'We offer visa sponsorship for the right candidate'}
+        ) == SPONSORSHIP_BOOST
+
+    def test_multiplier_neutral_without_signal(self):
+        assert sponsorship_multiplier(
+            {'description': 'On-site role in Munich'}) == 1.0
+
+    def test_sponsoring_job_outranks_identical_non_sponsoring(self, monkeypatch):
+        jf = JobFilter()
+        # Fix the CV base score so the test exercises the sponsorship boost, not
+        # whatever CV data happens to be present (the public repo ships none).
+        monkeypatch.setattr(jf, 'score_job_with_cv', lambda *a, **k: (50.0, 'cv'))
+        # Plain remote so neither is remote-penalised or geo-restricted under any
+        # eligibility config, and the base carries no sponsorship phrase; only
+        # Bravo's added line differs.
+        common = 'Remote engineering role.'
+        jobs = [
+            {'title': 'Process Engineer', 'company': 'Acme', 'location': 'Remote',
+             'source': 'Google Jobs', 'description': common},
+            {'title': 'Process Engineer', 'company': 'Bravo', 'location': 'Remote',
+             'source': 'Google Jobs',
+             'description': common + ' Visa sponsorship available.'},
+        ]
+        out = jf.filter_jobs(jobs, min_score=0)
+        assert len(out) == 2, 'neither is dropped'
+        assert out[0]['company'] == 'Bravo', 'the sponsoring job ranks first'
 
 
 class TestScamRisk:

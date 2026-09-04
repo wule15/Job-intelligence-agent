@@ -78,6 +78,52 @@ class TestBudgetAndRouting:
         SerpAPIJobSearcher().search_all(['q1', 'q2'], countries=['remote'], budget=6)
         assert calls == [('q1', None), ('q2', None)]
 
+    def test_rotate_picks_a_different_leading_query(self, monkeypatch):
+        calls = self._record(monkeypatch)
+        # rotate=1 rolls the list so q1 leads; with budget 1 that is the only
+        # query run, so a different day covers a different term.
+        SerpAPIJobSearcher().search_all(
+            ['q0', 'q1', 'q2'], countries=['de'], budget=1, rotate=1)
+        assert calls[0][0] == 'q1'
+
+    def test_rotate_wraps_modulo_length(self, monkeypatch):
+        calls = self._record(monkeypatch)
+        SerpAPIJobSearcher().search_all(
+            ['q0', 'q1', 'q2'], countries=['de'], budget=1, rotate=4)
+        assert calls[0][0] == 'q1'  # 4 % 3 == 1
+
+
+class TestQueryShaping:
+    def _capture(self, monkeypatch):
+        captured = {}
+
+        class FakeResp:
+            status_code = 200
+
+            def json(self):
+                return {'jobs_results': []}
+
+        def fake_get(url, params=None, timeout=None):
+            captured['params'] = params
+            return FakeResp()
+
+        monkeypatch.setenv('SERPAPI_KEY', 'test-key')
+        monkeypatch.setattr(serp.requests, 'get', fake_get)
+        return captured
+
+    def test_strips_leading_remote_for_market(self, monkeypatch):
+        cap = self._capture(monkeypatch)
+        serp.search_google_jobs('remote mechanical engineer', market=serp.MARKETS['de'])
+        assert cap['params']['q'] == 'mechanical engineer'
+        assert cap['params']['gl'] == 'de'
+
+    def test_remote_target_uses_ltype_and_no_location(self, monkeypatch):
+        cap = self._capture(monkeypatch)
+        serp.search_google_jobs('remote sales engineer', market=None)
+        assert cap['params']['ltype'] == '1'
+        assert cap['params']['q'] == 'sales engineer'
+        assert 'location' not in cap['params']
+
     def test_deduplicates_across_markets(self, monkeypatch):
         monkeypatch.setenv('SERPAPI_KEY', 'test-key')
         monkeypatch.setattr(serp.time, 'sleep', lambda *_: None)

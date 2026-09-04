@@ -17,6 +17,7 @@ through this source and are left to Jooble, Adzuna and Infostud instead.
 """
 
 import os
+import re
 import time
 import requests
 from core.utils import setup_logging
@@ -91,6 +92,12 @@ def search_google_jobs(query, market=None, num_results=10):
         logger.warning("[SerpAPI] SERPAPI_KEY not set, skipping Google Jobs")
         return []
 
+    # The query builder prepends "remote " to every query. That fights an
+    # on-site country search (a market pass for "remote sales engineer" in
+    # Germany returns nothing), and it is redundant for the remote pass, where
+    # ltype=1 already does the filtering. Strip it in both cases.
+    query = re.sub(r'^\s*remote\s+', '', query, flags=re.IGNORECASE).strip() or query
+
     params = {'engine': 'google_jobs', 'api_key': api_key}
     if market:
         params['q'] = query
@@ -160,7 +167,7 @@ def resolve_markets(countries):
 class SerpAPIJobSearcher:
     """Search Google Jobs via SerpAPI across queries and country markets."""
 
-    def search_all(self, queries, countries=None, budget=6):
+    def search_all(self, queries, countries=None, budget=6, rotate=0):
         """
         Run queries against the configured country markets, breadth-first (every
         market gets the top query before any market gets a second), capped at
@@ -174,11 +181,20 @@ class SerpAPIJobSearcher:
                        runs a single remote pass over the queries.
             budget:    Hard cap on the number of SerpApi searches this call
                        makes. None or 0 means no cap.
+            rotate:    Offset to rotate the query list by (pass the day-of-year).
+                       Because the budget usually only affords the first query
+                       across all targets, rotating daily means each market is
+                       covered by a different query on successive days, so the
+                       whole curated list gets used over time instead of only
+                       its first entry.
 
         Returns:
             Deduplicated job dicts. Stops early if no API key is configured.
         """
         queries = list(queries)
+        if queries and rotate:
+            r = rotate % len(queries)
+            queries = queries[r:] + queries[:r]
         codes = [c.strip().lower() for c in (countries or [])]
         remote_wanted = any(c in ('remote', 'anywhere', 'worldwide') for c in codes)
         market_codes = [c for c in codes if c not in ('remote', 'anywhere', 'worldwide')]

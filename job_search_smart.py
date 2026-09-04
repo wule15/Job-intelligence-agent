@@ -5,6 +5,7 @@ Searches across all internet job boards via JSearch API.
 """
 
 import json
+from datetime import date
 from pathlib import Path
 from sources.free_boards import FreeJobSearcher
 from sources.jsearch import JSearchJobScraper
@@ -304,18 +305,23 @@ class SmartJobSearcher:
             r.jobs = self.linkedin.search_all(specific_queries[:5], pages=2)
         results.append(r)
 
-        # 5. SerpAPI, Google Jobs, localised per configured country market.
-        #    Needs SERPAPI_KEY, skipped without one. Google Jobs returns nothing
-        #    for a bare query, so each market (Config.SERPAPI_COUNTRIES) is
-        #    queried with its own gl/domain/hl. Budget-capped
-        #    (Config.SERPAPI_BUDGET) to stay within the monthly quota.
+        # 5. SerpAPI, Google Jobs, localised per configured country market plus a
+        #    fully-remote target. Needs SERPAPI_KEY, skipped without one. Google
+        #    Jobs returns nothing for a bare query, so each market
+        #    (Config.SERPAPI_COUNTRIES) is queried with its own gl/domain/hl.
+        #    Prefer the curated SERPAPI_QUERIES (terms known to return) over the
+        #    CV queries, and rotate by day-of-year so the budget, which usually
+        #    only affords the first query, covers a different term each day.
+        #    Budget-capped (Config.SERPAPI_BUDGET) to stay within the monthly quota.
+        serpapi_queries = Config.SERPAPI_QUERIES or specific_queries
         print(f"\n[*] Searching Google Jobs via SerpAPI "
-              f"({len(Config.SERPAPI_COUNTRIES)} markets, budget {Config.SERPAPI_BUDGET})...")
+              f"({len(Config.SERPAPI_COUNTRIES)} targets, budget {Config.SERPAPI_BUDGET})...")
         with source_health.track('SerpAPI', queries=Config.SERPAPI_BUDGET) as r:
             r.jobs = self.serpapi.search_all(
-                specific_queries,
+                serpapi_queries,
                 countries=Config.SERPAPI_COUNTRIES,
                 budget=Config.SERPAPI_BUDGET,
+                rotate=date.today().timetuple().tm_yday,
             )
         results.append(r)
 
