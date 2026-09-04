@@ -86,6 +86,21 @@ class Config:
     # Get key at: https://jooble.org/api/about
     JOOBLE_API_KEY = os.getenv("JOOBLE_API_KEY")
 
+    # SerpApi Google Jobs (free tier 250 searches/month). Needs SERPAPI_KEY.
+    # Google Jobs returns nothing for a bare query, so each country is queried
+    # with its own gl/domain/hl; see the verified MARKETS table in
+    # sources/serpapi.py. SERPAPI_COUNTRIES picks which targets to run, comma
+    # separated. Use the special code "remote" for a fully-remote-anywhere pass,
+    # plus real country codes for localised markets, e.g. "remote,de,at,fr,nl,
+    # be,dk". Empty by default so the public engine adds nothing extra.
+    # SERPAPI_BUDGET caps searches per run to stay in the monthly quota
+    # (free tier ~= 8/day); set it to at least the number of targets.
+    SERPAPI_KEY = os.getenv("SERPAPI_KEY")
+    SERPAPI_COUNTRIES = [
+        s.strip().lower() for s in os.getenv("SERPAPI_COUNTRIES", "").split(",") if s.strip()
+    ]
+    SERPAPI_BUDGET = int(os.getenv("SERPAPI_BUDGET", "6"))
+
     # Logging Configuration
     LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
     LOG_DIR = str(LOGS_DIR)
