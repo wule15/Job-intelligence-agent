@@ -409,6 +409,25 @@ def us_location_multiplier(job: dict) -> float:
     return 1.0
 
 
+# ── Visa-sponsorship uprank ───────────────────────────────────────────────────
+# On-site/hybrid roles in permit-required countries are kept, not dropped:
+# postings rarely state sponsorship even when the employer would sponsor, so a
+# hard filter would throw away most of the real EU inventory. Instead, a job
+# that explicitly signals sponsorship is surfaced higher, so the ones a non-EU
+# candidate can actually take without a permit float to the top of the digest.
+SPONSORSHIP_BOOST = 1.25
+
+
+def sponsorship_multiplier(job: dict) -> float:
+    """Score multiplier that lifts postings which explicitly offer visa
+    sponsorship. 1.0 leaves the score unchanged."""
+    text = (job.get('title', '') + ' ' + job.get('description', '') + ' '
+            + job.get('company', '')).lower()
+    if any(phrase in text for phrase in SPONSORSHIP_PHRASES):
+        return SPONSORSHIP_BOOST
+    return 1.0
+
+
 # ── Target role keywords, presence in title boosts score ────────────────────
 TITLE_BOOST_KEYWORDS = [
     'sales engineer', 'technical sales', 'pre-sales', 'presales',
@@ -747,12 +766,17 @@ class JobFilter:
                 multiplier = us_location_multiplier(job)
                 if not self.is_remote(job):
                     multiplier *= REMOTE_PREFERENCE_PENALTY
+                # Lift roles that explicitly offer visa sponsorship, so the
+                # takeable-without-a-permit ones rise above equally scored jobs.
+                multiplier *= sponsorship_multiplier(job)
                 # Suspected scam: sink it and mark it, but do not delete, since
                 # this is a heuristic. The digest recomputes the flag to warn.
                 if scam_risk(title, description, company, job.get('link', '')):
                     multiplier *= SCAM_RISK_PENALTY
                     job['scam_risk'] = True
-            job['relevance_score'] = round(score * multiplier)
+            # Cap at 100: the sponsorship boost can push a high score past it,
+            # and a >100% relevance reads as a bug in the digest.
+            job['relevance_score'] = round(min(100, score * multiplier))
             job['best_cv'] = best_cv
             scored_jobs.append(job)
 
