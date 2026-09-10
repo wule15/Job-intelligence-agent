@@ -398,7 +398,12 @@ def is_us_located(location: str) -> bool:
 
 def us_location_multiplier(job: dict) -> float:
     """Score multiplier for the US downrank. 1.0 leaves the score unchanged;
-    US_LOCATION_PENALTY sinks a US-located job with no worldwide/EU signal."""
+    US_LOCATION_PENALTY sinks a US-located job with no worldwide/EU signal.
+
+    SUPERSEDED 2026-09-09 by region_preference_multiplier for digest ranking.
+    Kept because callers and tests still reference it, and because the flat US
+    downrank is still the right answer for anyone whose preferences differ.
+    """
     text = (job.get('title', '') + ' ' + job.get('description', '') + ' '
             + job.get('location', '')).lower()
     if (any(phrase in text for phrase in SPONSORSHIP_PHRASES)
@@ -407,6 +412,65 @@ def us_location_multiplier(job: dict) -> float:
     if is_us_located(job.get('location', '')):
         return US_LOCATION_PENALTY
     return 1.0
+
+
+# ── Excluded locations ────────────────────────────────────────────────────────
+# Countries or cities the user has ruled out entirely, remote and on-site alike.
+# Read from Config.EXCLUDED_LOCATIONS (their .env), so the public engine excludes
+# nothing by default.
+#
+# Matched on the location field only, never the description: a role in one
+# country whose description happens to mention an office in an excluded one must
+# not be dropped.
+#
+# Matched on word boundaries rather than as bare substrings. A substring test for
+# a country name will also hit unrelated places that merely contain it, silently
+# dropping jobs that were never meant to be excluded.
+def _excluded_location_pattern(terms):
+    if not terms:
+        return None
+    return re.compile(
+        r'|'.join(r'\b' + re.escape(t) + r'\b' for t in terms), re.IGNORECASE
+    )
+
+
+def is_excluded_location(location: str, terms=None) -> bool:
+    """True when the role sits somewhere the user has ruled out entirely."""
+    if terms is None:
+        terms = Config.EXCLUDED_LOCATIONS
+    pattern = _excluded_location_pattern(terms)
+    if pattern is None:
+        return False
+    return bool(pattern.search(location or ''))
+
+
+# ── Region preference ─────────────────────────────────────────────────────────
+# Ranks Europe above other acceptable regions without hiding them, for a user who
+# can pursue work authorisation in the EU/EEA but is willing to go further afield.
+# The strength is Config.NON_EUROPE_PREFERENCE, which defaults to 1.0, meaning no
+# preference at all unless the user sets one.
+#
+# This is deliberately gentler than the older flat US downrank, which was built
+# for a narrower case and buries an entire continent. Use that one instead when
+# non-European roles genuinely are a fallback rather than a real option.
+def region_preference_multiplier(job: dict) -> float:
+    """Rank Europe first and keep every other accepted region close behind.
+
+    Returns 1.0 for Europe, for anything carrying a sponsorship or worldwide
+    signal, and for a job with no usable location, which is normally
+    remote-anywhere. Everywhere else gets Config.NON_EUROPE_PREFERENCE.
+    """
+    location = job.get('location', '') or ''
+    text = (job.get('title', '') + ' ' + job.get('description', '') + ' '
+            + location).lower()
+    if (any(phrase in text for phrase in SPONSORSHIP_PHRASES)
+            or any(phrase in text for phrase in GEO_ALLOW_PHRASES)):
+        return 1.0
+    if _is_eu_located(location, text):
+        return 1.0
+    if not location.strip() or location.strip().lower() in ('not stated', 'n/a', 'remote'):
+        return 1.0
+    return Config.NON_EUROPE_PREFERENCE
 
 
 # ── Visa-sponsorship uprank ───────────────────────────────────────────────────
@@ -704,6 +768,7 @@ class JobFilter:
             'dealbreaker': 0,
             'pure_programming': 0,
             'geo_restricted': 0,
+            'excluded_location': 0,
             'non_english': 0,
             'below_min_score': 0,
         }
@@ -737,6 +802,12 @@ class JobFilter:
                     rejected['geo_restricted'] += 1
                     continue
 
+                # A ruled-out country is dropped outright, remote or not.
+                if is_excluded_location(job.get('location', '')):
+                    logger.debug(f"Excluded location: {title} @ {company}")
+                    rejected['excluded_location'] += 1
+                    continue
+
                 if is_non_english_title(title):
                     logger.debug(f"Non-English title: {title} @ {company}")
                     rejected['non_english'] += 1
@@ -763,7 +834,7 @@ class JobFilter:
             if always_include:
                 multiplier = 1.0
             else:
-                multiplier = us_location_multiplier(job)
+                multiplier = region_preference_multiplier(job)
                 if not self.is_remote(job):
                     multiplier *= REMOTE_PREFERENCE_PENALTY
                 # Lift roles that explicitly offer visa sponsorship, so the

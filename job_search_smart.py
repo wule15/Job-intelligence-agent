@@ -181,10 +181,40 @@ class SmartJobSearcher:
             or 'sales development' in s or 'bant' in s
             for s in all_cv_skills
         )
+        # Testing / validation track. Added 2026-09-09: there was no testing block
+        # at all, so sales had ten dedicated queries and testing had none. Scans
+        # all CV skills rather than top skills, same reasoning as has_outbound.
+        has_testing = any(
+            'test' in s or 'validation' in s or 'verification' in s
+            or 'commissioning' in s or 'inspection' in s or 'quality' in s
+            for s in all_cv_skills
+        )
 
+        # R&D as a whole, not simulation only. Rebalanced 2026-09-09: this block
+        # was almost entirely CFD/FEA titles, which is one corner of R&D and not
+        # where most of the jobs are. Simulation keeps two slots, CFD for the
+        # specific skill and CAE as the umbrella most FEA and CFD roles are
+        # actually advertised under; the other eight cover development, research,
+        # prototyping and new product work.
         if has_cfd or has_domain:
+            queries.add("remote R&D engineer")
+            queries.add("remote research engineer")
+            queries.add("remote R&D mechanical engineer")
+            queries.add("remote product development engineer")
+            queries.add("remote new product development engineer")
+            queries.add("remote applied research engineer")
+            queries.add("remote innovation engineer")
+            queries.add("remote test and development engineer")
             queries.add("remote CFD engineer")
-            queries.add("remote aerodynamics engineer")
+            queries.add("remote CAE engineer")
+
+        if has_testing or has_domain:
+            queries.add("remote test engineer")
+            queries.add("remote systems test engineer")
+            queries.add("remote validation engineer")
+            queries.add("remote QA engineer")
+            queries.add("remote quality engineer")
+            queries.add("remote test automation engineer")
 
         if has_valve or has_domain:
             queries.add("remote valve engineer")
@@ -211,15 +241,47 @@ class SmartJobSearcher:
         # AI-enabled roles are wanted. These used to be gated behind content to
         # avoid pulling pure programming; the is_pure_programming filter now
         # drops non-AI dev roles downstream, so the queries can run freely.
+        # AI adoption, not AI development. These target the role that brings AI
+        # into an operation that already exists, rather than the role that builds
+        # the AI product, which is a different profession with different
+        # competition.
+        #
+        # Deliberately NOT queried, and why:
+        #   AI engineer / applied AI engineer / AI integration engineer
+        #       software development roles
+        #   AI automation engineer / automation engineer / automation specialist
+        #       reads as workflow-tooling development
+        #   ML engineer / data scientist
+        #       modelling roles, distinct from building with LLM APIs
+        #   industrial automation engineer
+        #       PLC and controls work, a different job family
+        #   AI operations specialist
+        #       vague, little real-world use as a job title
+        # The downstream is_pure_programming filter also drops non-AI dev roles,
+        # so this is belt and braces rather than the only defence.
         if has_ai:
-            queries.add("remote AI automation engineer")
             queries.add("remote AI implementation specialist")
-            queries.add("remote automation specialist")
-            queries.add("remote AI operations specialist")
+            queries.add("remote AI adoption specialist")
+            queries.add("remote AI enablement specialist")
+            queries.add("remote AI solutions consultant")
+            queries.add("remote AI transformation consultant")
             if has_content:
                 queries.add("remote AI content operations")
             if has_sales:
                 queries.add("remote AI solutions engineer")
+            # The industrial / AI overlap, the differentiated niche: a mechanical
+            # engineer who ships AI automation. Gated on the domain so it only
+            # fires for someone with the engineering background to back it.
+            if has_valve or has_domain:
+                queries.add("remote predictive maintenance engineer")
+                queries.add("remote industrial AI engineer")
+                queries.add("remote IIoT solutions engineer")
+                queries.add("remote digital transformation engineer")
+                # Added 2026-09-09. Industry 4.0 is the standard label for exactly
+                # this, AI and digitalisation applied to manufacturing, and process
+                # automation consulting is the same job in a services company.
+                queries.add("remote Industry 4.0 engineer")
+                queries.add("remote process automation consultant")
 
         if has_outbound or has_sales:
             queries.add("remote appointment setter")
@@ -229,7 +291,26 @@ class SmartJobSearcher:
             queries.add("remote lead generation specialist")
             queries.add("remote business development representative")
 
-        # 3. Sort by specificity (longer = more specific) so Apify gets best 3
+        # 3. Emit a location-neutral form of every query alongside the remote one.
+        #
+        # Added 2026-09-09. Every query built above is prefixed "remote ", and
+        # nothing downstream ever stripped it, so the feed was structurally
+        # incapable of surfacing a hybrid or on-site role anywhere. That is fine
+        # for a remote-only search and silently wrong for anyone open to moving.
+        # Sources that are remote-only by nature (RemoteOK, Remotive) are
+        # unaffected, since everything they hold is remote regardless; the
+        # location-aware sources gain the coverage they were missing.
+        #
+        # This roughly doubles the query count, which is affordable now that
+        # JSearch is capped by JSEARCH_BUDGET. Before that cap it would have
+        # meant ~250 calls per run to the worst-performing source.
+        for q in list(queries):
+            if q.startswith("remote "):
+                plain = q[len("remote "):].strip()
+                if len(plain.split()) >= 2:   # skip one-word stubs, too broad to be useful
+                    queries.add(plain)
+
+        # 4. Sort by specificity (longer = more specific) so Apify gets best 3
         queries = sorted(queries, key=lambda q: len(q), reverse=True)
 
         logger.info(f"Built {len(queries)} search queries:")
@@ -259,7 +340,12 @@ class SmartJobSearcher:
         # Split queries by specificity tier so each source gets the queries it's best at.
         # Specific (multi-word, skill-named) → paid/premium sources with full descriptions.
         # Broad (short, role-based) → free sources that filter client-side anyway.
-        specific_queries = [q for q in queries if len(q.split()) >= 3]   # e.g. "remote CFD engineer"
+        # Sorted longest-first, which the comment above always claimed but the
+        # code never actually did. It matters now that JSearch is capped: the cap
+        # keeps the most specific queries and drops the broad tail.
+        specific_queries = sorted(
+            (q for q in queries if len(q.split()) >= 3), key=len, reverse=True
+        )
         broad_queries    = [q for q in queries if len(q.split()) < 3]    # e.g. "remote engineer"
 
         # Ensure at least some queries in each tier
@@ -286,9 +372,11 @@ class SmartJobSearcher:
         results.append(r)
 
         # 2. JSearch, specific queries only, paid, full descriptions
-        print(f"\n[*] Trying JSearch ({len(specific_queries)} specific queries)...")
-        with source_health.track('JSearch', queries=len(specific_queries)) as r:
-            for query in specific_queries:
+        jsearch_queries = specific_queries[:Config.JSEARCH_BUDGET]
+        print(f"\n[*] Trying JSearch ({len(jsearch_queries)} of {len(specific_queries)} "
+              f"specific queries, budget {Config.JSEARCH_BUDGET})...")
+        with source_health.track('JSearch', queries=len(jsearch_queries)) as r:
+            for query in jsearch_queries:
                 r.jobs.extend(self.jsearch.search_jobs(query, num_pages=2))
         results.append(r)
 

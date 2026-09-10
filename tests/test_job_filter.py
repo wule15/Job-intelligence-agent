@@ -330,8 +330,16 @@ class TestFilterJobs:
         )]
         assert job_filter.filter_jobs(jobs, min_score=0) == []
 
-    def test_us_job_is_downranked_not_dropped(self, job_filter, make_job):
-        """A US-located job is kept but scores below its identical EU twin."""
+    def test_us_job_is_downranked_not_dropped(self, job_filter, make_job, monkeypatch):
+        """A non-European job is kept but scores below its identical EU twin.
+
+        The preference strength is pinned here rather than taken from the ambient
+        config, which defaults to 1.0 (no preference). Without pinning it, this
+        test would pass or fail depending on whether the machine running it
+        happens to have a .env that sets one.
+        """
+        from core.config import Config
+        monkeypatch.setattr(Config, 'NON_EUROPE_PREFERENCE', 0.6)
         desc = 'Valve sizing, Kv calculation, P&ID and ATEX.'
         jobs = [
             make_job(description=desc, location='Austin, TX'),

@@ -100,6 +100,30 @@ class Config:
         s.strip().lower() for s in os.getenv("SERPAPI_COUNTRIES", "").split(",") if s.strip()
     ]
     SERPAPI_BUDGET = int(os.getenv("SERPAPI_BUDGET", "6"))
+    # JSEARCH_BUDGET caps how many queries JSearch runs per pass. Added
+    # 2026-09-09: JSearch was the only paid source with no cap at all, so it ran
+    # every specific query at two pages each, 124 calls in a single run, while
+    # the logs showed it returning zero results for nearly all of them. Without
+    # a cap, every query added anywhere else silently cost two more JSearch
+    # calls. Queries are sorted longest-first, so the cap keeps the most
+    # specific ones and drops the broad tail.
+    JSEARCH_BUDGET = int(os.getenv("JSEARCH_BUDGET", "40"))
+    # EXCLUDED_LOCATIONS drops a job outright when its location field matches any
+    # of these terms, remote or on-site alike. Personal to the user and read from
+    # .env, so the public engine excludes nothing by default. Comma separated,
+    # country or city names, e.g. "some-country,some-city,another-city".
+    #
+    # Terms are matched on word boundaries, never as bare substrings, because a
+    # substring test for a country name will also hit unrelated place names that
+    # merely contain it.
+    EXCLUDED_LOCATIONS = [
+        s.strip().lower()
+        for s in os.getenv("EXCLUDED_LOCATIONS", "").split(",")
+        if s.strip()
+    ]
+    # NON_EUROPE_PREFERENCE ranks Europe above other acceptable regions without
+    # hiding them. 1.0 disables the preference entirely.
+    NON_EUROPE_PREFERENCE = float(os.getenv("NON_EUROPE_PREFERENCE", "1.0"))
     # Curated queries for the SerpApi market passes. Google Jobs is query
     # sensitive (broad engineering nouns return, many phrasings return nothing),
     # so a fixed list of terms known to hit beats whatever the CV happens to
