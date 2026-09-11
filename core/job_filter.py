@@ -524,6 +524,26 @@ SECTOR_BOOST_KEYWORDS = [
 ]
 SECTOR_BOOST_MULTIPLIER = 1.3  # 30% bonus when company/description matches target sector
 
+# How many matched skills count as a perfect match for one CV variant. Never
+# more than the variant actually holds, so a small focused variant can still
+# reach 100 when a job mentions all of it. Raised from 15 to 25 on 2026-09-11:
+# the variants had grown to 56-62 skills, so 15 was reachable by any decent
+# job and a quarter of a day's digest tied on exactly 100, leaving the top of
+# the list unrankable.
+SKILL_MATCH_DENOMINATOR_CAP = 25
+
+
+def apply_boost(score, multiplier):
+    """
+    Lift a score toward 100 without collapsing the jobs it lifts into a tie.
+
+    The boosts used to multiply and then clamp: 1.4 x 1.3 = 1.82, so anything
+    above a raw 55 came out as exactly 100 no matter how well it really
+    matched. Spending the multiplier on the remaining headroom instead keeps
+    the result strictly increasing in score and inside 0-100.
+    """
+    return round(score + (100 - score) * (multiplier - 1.0), 1)
+
 # ── Non-English title markers ────────────────────────────────────────────────
 # Several aggregators return German postings for English queries. The
 # description is often English enough to score well, so the title is the only
@@ -687,10 +707,10 @@ class JobFilter:
             if not cv_skills:
                 continue
             matches = sum(1 for s in cv_skills if skill_matches(s, desc_lower))
-            # Cap denominator at 15, a job description will never mention all CV skills.
-            # Dividing by total skills (50+) made every score artificially low.
-            # 3 matches out of 15 = 20%, not 6%.
-            denominator = min(len(cv_skills), 15)
+            # A job description will never mention all CV skills, so dividing by
+            # the full list (50+) made every score artificially low. See
+            # SKILL_MATCH_DENOMINATOR_CAP for why the cap is what it is.
+            denominator = min(len(cv_skills), SKILL_MATCH_DENOMINATOR_CAP)
             score = round(min(100, (matches / denominator) * 100), 1)
             if score > best_score:
                 best_score = score
@@ -698,17 +718,17 @@ class JobFilter:
 
         # Title boost, target role in job title
         if best_score > 0 and any(kw in title_lower for kw in TITLE_BOOST_KEYWORDS):
-            best_score = round(min(100, best_score * TITLE_BOOST_MULTIPLIER), 1)
+            best_score = apply_boost(best_score, TITLE_BOOST_MULTIPLIER)
 
         # Sector boost, industrial / SaaS company or description
         sector_text = (job_description + ' ' + company).lower()
         if best_score > 0 and any(kw in sector_text for kw in SECTOR_BOOST_KEYWORDS):
-            best_score = round(min(100, best_score * SECTOR_BOOST_MULTIPLIER), 1)
+            best_score = apply_boost(best_score, SECTOR_BOOST_MULTIPLIER)
 
         # Fallback: score against merged skills if no CV-level data
         if best_score == 0 and self.all_skills:
             matches = sum(1 for s in self.all_skills if skill_matches(s, desc_lower))
-            denominator = min(len(self.all_skills), 15)
+            denominator = min(len(self.all_skills), SKILL_MATCH_DENOMINATOR_CAP)
             best_score = round(min(100, (matches / denominator) * 100), 1)
 
         return best_score, best_cv

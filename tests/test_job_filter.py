@@ -214,6 +214,51 @@ class TestScoring:
         score, _ = job_filter.score_job_with_cv('Sales Engineer', desc, 'Acme')
         assert score <= 100
 
+    @staticmethod
+    def _big_variant_filter():
+        """A filter with one large CV variant, like the real enriched ones."""
+        jf = JobFilter()
+        skills = {f'skill{i:03d}': 1 for i in range(60)}
+        jf.skills_data = {
+            'cvs': {'Big': {'skills': skills}},
+            'linkedin': {},
+            'merged_skills': {},
+        }
+        jf.all_skills = set(skills)
+        return jf
+
+    def test_strong_match_outranks_a_merely_good_one(self):
+        """
+        The denominator was capped at 15 while the real CV variants hold 56 to
+        62 skills, so any job mentioning 15 of them scored 100 and a job
+        mentioning 45 scored exactly the same. Ranking died at the top of the
+        digest: a quarter of one day's results sat on 100 and could not be
+        ordered.
+        """
+        jf = self._big_variant_filter()
+        fewer = ' '.join(f'skill{i:03d}' for i in range(18))
+        more = ' '.join(f'skill{i:03d}' for i in range(45))
+
+        low, _ = jf.score_job_with_cv('Analyst', fewer, 'Acme')
+        high, _ = jf.score_job_with_cv('Analyst', more, 'Acme')
+        assert high > low
+
+    def test_boosts_do_not_flatten_strong_jobs_onto_the_ceiling(self):
+        """
+        Title and sector boosts multiplied (1.4 x 1.3 = 1.82) and the result was
+        then clipped at 100, so every job above a raw 55 landed on exactly 100
+        however well it actually matched. Boosts must lift a score without
+        collapsing the jobs they lift into a tie.
+        """
+        jf = self._big_variant_filter()
+        good = ' '.join(f'skill{i:03d}' for i in range(20))
+        better = ' '.join(f'skill{i:03d}' for i in range(50))
+
+        lower, _ = jf.score_job_with_cv('Sales Engineer', good, 'Acme')
+        upper, _ = jf.score_job_with_cv('Sales Engineer', better, 'Acme')
+        assert upper > lower
+        assert upper <= 100
+
 
 class TestGeoRestriction:
     def test_us_auth_is_blocked_under_strict_default(self):
