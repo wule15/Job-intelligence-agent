@@ -15,6 +15,7 @@ from core.job_filter import (  # noqa: E402
     is_blocked_source,
     is_geo_restricted,
     is_non_english_title,
+    states_english_working_language,
     is_us_located,
     us_location_multiplier,
     US_LOCATION_PENALTY,
@@ -352,6 +353,58 @@ class TestNonEnglishTitles:
     def test_marker_must_start_a_word(self):
         """Whole word matching, so ordinary English is not caught."""
         assert not is_non_english_title('Senior Content Lead')
+
+    def test_danish_title_is_flagged(self):
+        """Danish and Dutch postings arrive from the dk/nl/be SerpApi markets."""
+        assert is_non_english_title('Salgsingeniør til ventiler')
+        assert is_non_english_title('Projektleder, maskinteknik')
+        assert is_non_english_title('Erfaren medarbejder til produktion')
+
+    def test_dutch_title_is_flagged(self):
+        assert is_non_english_title('Werkvoorbereider installatietechniek')
+        assert is_non_english_title('Technisch medewerker onderhoud')
+        assert is_non_english_title('Verkoop adviseur industriële techniek')
+
+    def test_english_titles_from_those_markets_survive(self):
+        """Danish and Dutch employers post plenty of roles in English."""
+        assert not is_non_english_title('Sales Engineer, Valves')
+        assert not is_non_english_title('Maintenance Coordinator')
+        assert not is_non_english_title('Project Manager, Process Industry')
+
+
+class TestEnglishWorkingLanguageRescue:
+    """
+    A non-English title is not automatically a dead end. Some employers post in
+    the local language but run the job in English, and those are worth keeping.
+    The rescue is deliberately narrow: an explicit statement about the working
+    language, not a passing mention of English.
+    """
+
+    def test_explicit_working_language_statement_rescues(self):
+        assert states_english_working_language(
+            'Vi søger en ingeniør. Our working language is English.')
+        assert states_english_working_language(
+            'De voertaal is Engels binnen het team.')
+        assert states_english_working_language(
+            'All internal communication is in English.')
+        assert states_english_working_language(
+            'No Danish required, the company language is English.')
+
+    def test_passing_mention_of_english_does_not_rescue(self):
+        """
+        The common case is a local-language job that also wants English. Those
+        must stay rejected, or the filter does nothing.
+        """
+        assert not states_english_working_language(
+            'Du taler og skriver flydende dansk og engelsk.')
+        assert not states_english_working_language(
+            'Goede beheersing van Nederlands en Engels is vereist.')
+        assert not states_english_working_language(
+            'Fluent in English and German.')
+
+    def test_empty_description_does_not_rescue(self):
+        assert not states_english_working_language('')
+        assert not states_english_working_language(None)
 
 
 class TestFilterJobs:

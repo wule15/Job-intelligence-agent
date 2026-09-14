@@ -550,9 +550,47 @@ def apply_boost(score, multiplier):
 # reliable signal. Matched as whole words to avoid catching English words that
 # happen to contain them.
 NON_ENGLISH_TITLE_MARKERS = [
+    # German
     'entwickler', 'ingenieur', 'leiter', 'kaufmann', 'kauffrau',
     'vertrieb', 'werkstudent', 'praktikant', 'ausbildung',
     'mitarbeiter', 'sachbearbeiter', 'buchhalter',
+    # Danish. The dk SerpApi market returns these for English queries.
+    'ingeniør', 'medarbejder', 'projektleder', 'salgs', 'udvikler',
+    'erfaren', 'tekniker', 'konsulent', 'lærling',
+    # Dutch, from the nl and be markets.
+    'medewerker', 'ontwikkelaar', 'werkvoorbereider', 'verkoop',
+    'onderhoud', 'adviseur', 'beheerder', 'inkoper', 'monteur',
+    'leidinggevende', 'technicus', 'vacature',
+]
+
+# ── English as the stated working language ───────────────────────────────────
+# A local-language title is not automatically a dead end. Plenty of Danish and
+# Dutch employers advertise in their own language and then run the job in
+# English, and those are worth keeping.
+#
+# Deliberately narrow. It matches an explicit statement about the language the
+# work is conducted in, never a passing mention of English, because the common
+# case is a local-language role that also wants English on top. Matching
+# "fluent in English" would rescue exactly the jobs this filter exists to drop.
+ENGLISH_WORKING_LANGUAGE_PHRASES = [
+    'working language is english',
+    'english is the working language',
+    'english is our working language',
+    'company language is english',
+    'corporate language is english',
+    'business language is english',
+    'communication is in english',
+    'all communication in english',
+    'we speak english',
+    'english speaking environment',
+    'english-speaking environment',
+    'no danish required',
+    'no dutch required',
+    'danish is not required',
+    'dutch is not required',
+    'voertaal is engels',          # Dutch: "the working language is English"
+    'arbejdssproget er engelsk',   # Danish: same
+    'koncernsproget er engelsk',
 ]
 
 # Sources whose jobs bypass scoring and filtering. A job you saved by hand is
@@ -608,6 +646,18 @@ def is_non_english_title(job_title: str) -> bool:
         re.search(rf'\b{re.escape(marker)}', title)
         for marker in NON_ENGLISH_TITLE_MARKERS
     )
+
+
+def states_english_working_language(job_description: str) -> bool:
+    """
+    Return True only if the posting explicitly says the work is done in English.
+
+    Used to rescue a job whose title is in another language. Kept strict on
+    purpose: a posting that merely asks for English on top of the local language
+    must not pass, or the language filter stops filtering anything.
+    """
+    text = (job_description or '').lower()
+    return any(phrase in text for phrase in ENGLISH_WORKING_LANGUAGE_PHRASES)
 
 class JobFilter:
     """Filter and rank jobs by relevance to user skills."""
@@ -828,7 +878,8 @@ class JobFilter:
                     rejected['excluded_location'] += 1
                     continue
 
-                if is_non_english_title(title):
+                if (is_non_english_title(title)
+                        and not states_english_working_language(description)):
                     logger.debug(f"Non-English title: {title} @ {company}")
                     rejected['non_english'] += 1
                     continue
