@@ -19,8 +19,9 @@ NEGATIVE_KEYWORDS = [
     'security clearance', 'clearance required', 'top secret', 'secret clearance',
     'ts/sci', 'must be a us citizen', 'us citizenship required',
     'active clearance', 'government clearance',
-    # Experience overreach
-    '15+ years', '15 years of experience', '20+ years', '20 years of experience',
+    # Experience overreach used to live here and drop the job outright. It now
+    # lowers the rank instead, see experience_multiplier, so a senior posting
+    # is still shown, just further down.
     # Strict on-site (belt-and-suspenders alongside remote filter)
     'no remote', 'not a remote', 'on-site only', 'onsite only', 'must be onsite',
     'relocation required', 'must relocate',
@@ -492,6 +493,180 @@ def sponsorship_multiplier(job: dict) -> float:
     return 1.0
 
 
+# ── Export control ────────────────────────────────────────────────────────────
+# Roles restricted under US export-control law (ITAR, the Export Administration
+# Regulations) can only be filled by a "U.S. person", which a non-US national on
+# a work visa is not. These are dropped outright. An ordinary US role is kept:
+# most US postings say nothing about sponsorship even when an employer would
+# sponsor, so only an explicit exclusion is treated as one.
+#
+# Regular expressions on word boundaries rather than substrings. "EAR" alone
+# is never matched, since it would hit "year", "clear" and "ear for detail",
+# and "us person" must not fire on "contact us personally" or "focus person".
+EXPORT_CONTROL_PATTERNS = [re.compile(p) for p in (
+    r'\bitar\b',
+    r'\bu\.\s?s\.\s?persons?\b',
+    r'\bus persons?\b',
+    r'\bexport administration regulations\b',
+    r'\bear[- ]controlled\b',
+    r'\bsubject to the ear\b',
+    r'\bexport[- ]controll?ed\b',
+    r'\bexport controls?\b',
+)]
+
+
+def is_export_controlled(text: str) -> bool:
+    """True when a posting explicitly limits the role to US persons under
+    export-control rules, which a non-US national can never satisfy."""
+    t = (text or '').lower()
+    return any(p.search(t) for p in EXPORT_CONTROL_PATTERNS)
+
+
+# ── Required experience ───────────────────────────────────────────────────────
+# Years of experience lower a job's rank and never drop it. The candidate has a
+# little under three years, so up to two years is a full match, three or four is
+# a stretch worth only a slight nudge, and five or more is a real gap. A
+# requirement marked preferred or a plus counts for half the penalty.
+#
+# Only numbers that sit next to the word "experience" are read, and a number
+# the company uses about itself ("founded 20 years ago", "we have 30 years of
+# experience") is ignored, since it says nothing about the candidate.
+_WORD_NUMBERS = {
+    'one': 1, 'two': 2, 'three': 3, 'four': 4, 'five': 5, 'six': 6,
+    'seven': 7, 'eight': 8, 'nine': 9, 'ten': 10, 'twelve': 12,
+    'fifteen': 15, 'twenty': 20,
+}
+_NUM = r'(\d{1,2}|' + '|'.join(_WORD_NUMBERS) + r')'
+_YEARS_RE = re.compile(
+    r'\b' + _NUM + r'\s*(?:\+|plus)?\s*'
+    r'(?:(?:-|\u2013|to|or)\s*' + _NUM + r'\s*\+?\s*)?'
+    r'(?:years?|yrs?)\b')
+_COMPANY_ABOUT_ITSELF = re.compile(
+    r"\b(founded|established|in business|history of|we have|we've|"
+    r"our company|company has|the company)\b")
+_PREFERRED_MARKERS = (
+    'preferred', 'nice to have', 'nice-to-have', 'a plus', 'an advantage',
+    'advantageous', 'ideally', 'desirable', 'bonus',
+)
+EXPERIENCE_TIERS = (  # (at least this many years, multiplier)
+    (8, 0.75),
+    (5, 0.85),
+    (3, 0.95),
+)
+
+
+def _years_value(token):
+    return int(token) if token.isdigit() else _WORD_NUMBERS[token]
+
+
+def _tier_multiplier(years):
+    for floor, mult in EXPERIENCE_TIERS:
+        if years >= floor:
+            return mult
+    return 1.0
+
+
+def _sentence_around(text, start, end):
+    """The sentence (or line) containing text[start:end]."""
+    left = max(text.rfind('.', 0, start), text.rfind('\n', 0, start))
+    rights = [i for i in (text.find('.', end), text.find('\n', end)) if i != -1]
+    return text[left + 1:min(rights) if rights else len(text)]
+
+
+def required_experience(text: str):
+    """Return (years, preferred) for the most demanding experience requirement
+    in the text, or (None, False) when there is none. A range such as "3-5
+    years" counts as its lower bound, since that is what the employer accepts."""
+    t = (text or '').lower()
+    best = None  # (multiplier, years, preferred)
+    for m in _YEARS_RE.finditer(t):
+        before = t[max(0, m.start() - 45):m.start()]
+        after = t[m.end():m.end() + 60]
+        if 'experience' not in before and 'experience' not in after:
+            continue
+        if after.lstrip().startswith('ago') or _COMPANY_ABOUT_ITSELF.search(before):
+            continue
+        years = _years_value(m.group(1))
+        sentence = _sentence_around(t, m.start(), m.end())
+        preferred = any(marker in sentence for marker in _PREFERRED_MARKERS)
+        mult = _tier_multiplier(years)
+        if preferred:
+            mult = 1 - (1 - mult) / 2
+        if best is None or mult < best[0] or (mult == best[0] and years > best[1]):
+            best = (mult, years, preferred)
+    if best is None:
+        return None, False
+    return best[1], best[2]
+
+
+def experience_multiplier(job: dict) -> float:
+    """Score multiplier for the experience a posting asks for. 1.0 leaves the
+    score unchanged. Never drops a job, only lowers its rank."""
+    years, preferred = required_experience(job.get('description', ''))
+    if years is None:
+        return 1.0
+    mult = _tier_multiplier(years)
+    return 1 - (1 - mult) / 2 if preferred else mult
+
+
+# ── Source priority ───────────────────────────────────────────────────────────
+# Two aggregators fill the digest with senior US software roles far outside the
+# target: WeWorkRemotely, and Indeed through Apify. They are still searched and
+# still shown, just ranked a little lower so the ten slots per message go to
+# better sources first. Matched as a substring so 'Apify / Indeed' qualifies.
+LOW_PRIORITY_SOURCE_MARKERS = ('weworkremotely', 'indeed')
+LOW_PRIORITY_SOURCE_MULTIPLIER = 0.9
+
+
+def source_priority_multiplier(job: dict) -> float:
+    """0.9 for the crowding aggregators, 1.0 for everything else."""
+    source = (job.get('source') or '').lower()
+    if any(marker in source for marker in LOW_PRIORITY_SOURCE_MARKERS):
+        return LOW_PRIORITY_SOURCE_MULTIPLIER
+    return 1.0
+
+
+# ── Pump, valve and flow-equipment roles ──────────────────────────────────────
+# The role profile the candidate most wants: a pump, valve or flow-equipment
+# maker or distributor, where the job is taking an enquiry through to an offer
+# and a finished solution. Matched either on a known maker in the company or
+# title, or on the description talking about the equipment and about preparing
+# offers for it. Lifted a little and marked in the digest, never required.
+FLOW_EQUIPMENT_COMPANIES = (
+    'grundfos', 'danfoss', 'wilo', 'ksb', 'xylem', 'samson', 'flowserve',
+    'sulzer', 'alfa laval', 'spirax', 'ebara', 'kitz', 'stubbe', 'stuebbe',
+    'adams armaturen', 'abo valve', 'arako', 'burkert', 'b\u00fcrkert',
+    'georg fischer', 'emerson', 'fisher controls', 'neles', 'metso',
+    'pentair', 'watson-marlow', 'netzsch', 'seepex', 'lowara', 'caprari',
+)
+_FLOW_COMPANY_RE = re.compile(
+    r'\b(' + '|'.join(re.escape(c) for c in FLOW_EQUIPMENT_COMPANIES) + r')\b')
+_FLOW_EQUIPMENT_TERMS = re.compile(
+    r'\b(pumps?|valves?|actuators?|flow control|flow meters?|fluid systems?)\b')
+_OFFER_TERMS = re.compile(
+    r'\b(quotations?|quotes|technical offers?|offers? for|proposals?|tenders?|'
+    r'offer creation|sizing and selection)\b')
+FLOW_EQUIPMENT_BOOST = 1.1
+
+
+def is_flow_equipment_role(title: str, description: str, company: str) -> bool:
+    """True for a role at a pump, valve or flow-equipment company, or one whose
+    description is about preparing offers for that equipment."""
+    name = f"{title} {company}".lower()
+    if _FLOW_COMPANY_RE.search(name):
+        return True
+    desc = (description or '').lower()
+    return bool(_FLOW_EQUIPMENT_TERMS.search(desc) and _OFFER_TERMS.search(desc))
+
+
+def flow_equipment_multiplier(job: dict) -> float:
+    """A small lift for flow-equipment roles, 1.0 for everything else."""
+    if is_flow_equipment_role(job.get('title', ''), job.get('description', ''),
+                              job.get('company', '')):
+        return FLOW_EQUIPMENT_BOOST
+    return 1.0
+
+
 # ── Target role keywords, presence in title boosts score ────────────────────
 TITLE_BOOST_KEYWORDS = [
     'sales engineer', 'technical sales', 'pre-sales', 'presales',
@@ -506,6 +681,13 @@ TITLE_BOOST_KEYWORDS = [
     'outbound sales', 'lead generation', 'inside sales',
 ]
 TITLE_BOOST_MULTIPLIER = 1.4  # 40% bonus when role matches title
+# The title boost only confirms a match the advert itself supports. Below this
+# base score the description barely matches the CV, so a target-role title on
+# top of it is a title trap (an "Application Engineer" post about circuit
+# boards, an "Automation Engineer" post about test scripts), and the title is
+# not allowed to lift it. A title-only listing, with no description to read,
+# still gets the boost, since the title is all the evidence there is.
+TITLE_BOOST_MIN_BASE = 20.0
 
 # ── Sector boost, companies/descriptions in these industries score higher ────
 SECTOR_BOOST_KEYWORDS = [
@@ -743,9 +925,17 @@ class JobFilter:
         if not (job_description or job_title):
             return 0, None
 
-        desc_lower = " ".join(
-            part for part in (job_description, job_title, company) if part
-        ).lower()
+        # Score from the advert, not the title. A title can match a CV skill
+        # through its synonyms (an "Application Engineer" title reads as
+        # technical sales) while the job itself is about something else, so
+        # when there is a description the title is left out of the skill match.
+        # A title-only listing still scores on its title, the only text it has.
+        if (job_description or '').strip():
+            desc_lower = " ".join(
+                part for part in (job_description, company) if part).lower()
+        else:
+            desc_lower = " ".join(
+                part for part in (job_title, company) if part).lower()
         title_lower = job_title.lower()
         best_score = 0.0
         best_cv = None
@@ -766,9 +956,16 @@ class JobFilter:
                 best_score = score
                 best_cv = cv_name
 
-        # Title boost, target role in job title
+        # Title boost, target role in job title. Applied only when the advert
+        # already supports the match, see TITLE_BOOST_MIN_BASE. The support is
+        # measured on the description alone: the title itself can match a CV
+        # skill through its synonyms, so counting it would let a title trap
+        # vouch for itself.
         if best_score > 0 and any(kw in title_lower for kw in TITLE_BOOST_KEYWORDS):
-            best_score = apply_boost(best_score, TITLE_BOOST_MULTIPLIER)
+            if (not (job_description or '').strip()
+                    or self._description_only_score(job_description, company)
+                    >= TITLE_BOOST_MIN_BASE):
+                best_score = apply_boost(best_score, TITLE_BOOST_MULTIPLIER)
 
         # Sector boost, industrial / SaaS company or description
         sector_text = (job_description + ' ' + company).lower()
@@ -782,6 +979,22 @@ class JobFilter:
             best_score = round(min(100, (matches / denominator) * 100), 1)
 
         return best_score, best_cv
+
+    def _description_only_score(self, job_description, company=""):
+        """Best CV skill-match score from the advert text alone, title excluded.
+        Used to decide whether a target-role title deserves its boost."""
+        text = " ".join(p for p in (job_description, company) if p).lower()
+        best = 0.0
+        for cv_data in self.skills_data.get('cvs', {}).values():
+            if not isinstance(cv_data, dict) or 'skills' not in cv_data:
+                continue
+            cv_skills = [sk for sk in cv_data['skills'].keys() if sk]
+            if not cv_skills:
+                continue
+            matches = sum(1 for sk in cv_skills if skill_matches(sk, text))
+            denominator = min(len(cv_skills), SKILL_MATCH_DENOMINATOR_CAP)
+            best = max(best, min(100.0, (matches / denominator) * 100))
+        return best
 
     def score_job(self, job_title, job_description, company=""):
         """
@@ -809,7 +1022,7 @@ class JobFilter:
         keyword never gets scored:
 
           1. remote check, off by default
-          2. dealbreaker keywords, NEGATIVE_KEYWORDS
+          2. dealbreaker keywords, NEGATIVE_KEYWORDS, then export control
           3. geo restriction, GEO_BLOCK_PHRASES with an allow-list override
           4. non-English title markers
           5. relevance score below min_score
@@ -836,6 +1049,7 @@ class JobFilter:
             'blocked_source': 0,
             'not_remote': 0,
             'dealbreaker': 0,
+            'export_controlled': 0,
             'pure_programming': 0,
             'geo_restricted': 0,
             'excluded_location': 0,
@@ -865,6 +1079,11 @@ class JobFilter:
 
                 if self.is_negative_match(title, description):
                     rejected['dealbreaker'] += 1
+                    continue
+
+                if is_export_controlled(title + ' ' + description):
+                    logger.debug(f"Export controlled: {title} @ {company}")
+                    rejected['export_controlled'] += 1
                     continue
 
                 if is_geo_restricted(title, description, job.get('location', '')):
@@ -911,6 +1130,11 @@ class JobFilter:
                 # Lift roles that explicitly offer visa sponsorship, so the
                 # takeable-without-a-permit ones rise above equally scored jobs.
                 multiplier *= sponsorship_multiplier(job)
+                # Required experience, the crowding aggregators and flow-equipment
+                # roles only reorder. None of them drops a job.
+                multiplier *= experience_multiplier(job)
+                multiplier *= source_priority_multiplier(job)
+                multiplier *= flow_equipment_multiplier(job)
                 # Suspected scam: sink it and mark it, but do not delete, since
                 # this is a heuristic. The digest recomputes the flag to warn.
                 if scam_risk(title, description, company, job.get('link', '')):

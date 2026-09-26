@@ -556,19 +556,31 @@ def _parse_infostud_jobs(data):
     return jobs
 
 
-def search_infostud(query, pages=1):
+def _infostud_slug(text):
+    """Lowercase, hyphenated path segment, the shape Infostud's URLs use."""
+    return quote(text.strip().lower().replace(' ', '-'), safe='-')
+
+
+def search_infostud(query, pages=1, city=None):
     """
     Infostud (poslovi.infostud.com), Serbia's largest job board. No public API,
     so we read the Next.js __NEXT_DATA__ JSON the listing page ships. This also
     covers HelloWorld.rs IT listings, since both are Infostud-group sites and
     HelloWorld jobs surface in Infostud results, so a separate HelloWorld
     scraper would be redundant. Free, no key.
+
+    city narrows the search to one city. Infostud takes it as a path segment,
+    /oglasi-za-posao-<query>/<city>, which the site's robots.txt allows. None
+    searches the whole country, which is what this did before cities existed.
     """
     jobs = []
     q = quote(query.strip().replace(' ', '-'), safe='')
-    logger.info(f"[Infostud] Searching: {query!r}")
+    where = f" in {city}" if city else ""
+    logger.info(f"[Infostud] Searching: {query!r}{where}")
     for page in range(1, pages + 1):
         url = INFOSTUD_SEARCH.format(q=q)
+        if city:
+            url += '/' + _infostud_slug(city)
         if page > 1:
             url += f"?page={page}"
         try:
@@ -584,7 +596,34 @@ def search_infostud(query, pages=1):
             break
         jobs.extend(page_jobs)
         time.sleep(0.5)
-    logger.info(f"[Infostud] Found {len(jobs)} jobs for '{query}'")
+    logger.info(f"[Infostud] Found {len(jobs)} jobs for '{query}'{where}")
+    return jobs
+
+
+def _run_regional_boards(boards, queries, infostud_cities=None):
+    """
+    Run each configured regional board for each query and return the jobs.
+
+    Infostud runs once per configured city, or once nationwide when no city is
+    set. Split out of the main search so the fan-out can be tested without
+    running every other source.
+    """
+    dispatch = {'infostud': search_infostud}
+    jobs = []
+    for name in boards:
+        key = name.strip().lower()
+        fn = dispatch.get(key)
+        if not fn:
+            logger.warning(f"Unknown regional board '{name}', skipping")
+            continue
+        cities = list(infostud_cities or []) if key == 'infostud' else []
+        for q in queries:
+            for city in cities or [None]:
+                try:
+                    jobs.extend(fn(q, city=city) if city else fn(q))
+                    time.sleep(0.3)
+                except Exception as e:
+                    logger.warning(f"Board {name} skipped for '{q}': {e}")
     return jobs
 
 
@@ -816,19 +855,10 @@ class FreeJobSearcher:
         #      user's .env (empty by default, so the public engine adds nothing).
         #      These read a local board's own structured data, for coverage the
         #      global aggregators under-serve. Add a board by writing a search_*
-        #      function and registering it in BOARD_DISPATCH.
-        BOARD_DISPATCH = {'infostud': search_infostud}
-        for name in _RegionCfg.REGIONAL_BOARDS:
-            fn = BOARD_DISPATCH.get(name.strip().lower())
-            if not fn:
-                logger.warning(f"Unknown regional board '{name}', skipping")
-                continue
-            for q in regional_queries:
-                try:
-                    all_jobs.extend(fn(q))
-                    time.sleep(0.3)
-                except Exception as e:
-                    logger.warning(f"Board {name} skipped for '{q}': {e}")
+        #      function and registering it in _run_regional_boards.
+        all_jobs.extend(_run_regional_boards(
+            _RegionCfg.REGIONAL_BOARDS, regional_queries,
+            infostud_cities=_RegionCfg.INFOSTUD_CITIES))
 
         # 11. Bundesagentur, German Federal Employment Agency. German role terms
         #     find the most; the user's English queries also return results.

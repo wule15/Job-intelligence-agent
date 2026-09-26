@@ -192,10 +192,16 @@ class Config:
     ]
     REGIONAL_DIGEST_LABEL = os.getenv("REGIONAL_DIGEST_LABEL", "Regional jobs")
     # Dedicated regional job boards to scrape, comma separated, matched to a
-    # search_* function in sources/free_boards.py BOARD_DISPATCH (e.g.
+    # search_* function registered in sources/free_boards.py _run_regional_boards (e.g.
     # "infostud"). Empty by default so the public engine scrapes no local board.
     REGIONAL_BOARDS = [
         s.strip() for s in os.getenv("REGIONAL_BOARDS", "").split(",") if s.strip()
+    ]
+    # Cities to run the Infostud board in, comma separated, as they appear in
+    # Infostud's URLs (e.g. "city-a,city-b"). Empty searches the whole
+    # country, the behaviour before this setting existed.
+    INFOSTUD_CITIES = [
+        s.strip() for s in os.getenv("INFOSTUD_CITIES", "").split(",") if s.strip()
     ]
     # Queries used specifically for the regional sourcing passes (Jooble by
     # location, and the local boards). Comma separated. Empty by default, then

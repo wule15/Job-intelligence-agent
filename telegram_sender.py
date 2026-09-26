@@ -12,7 +12,9 @@ from urllib.parse import urljoin, urlparse
 import requests
 
 from core.config import Config
-from core.job_filter import ALWAYS_INCLUDE_SOURCES, matches_region, scam_risk
+from core.job_filter import (
+    ALWAYS_INCLUDE_SOURCES, is_flow_equipment_role, matches_region, scam_risk,
+)
 from core.utils import force_utf8_streams, format_cv_label
 
 # ── Digest composition ───────────────────────────────────────────────────────
@@ -39,11 +41,17 @@ MIN_DIGEST_SCORE = 15
 ATS_SOURCES = {'Greenhouse', 'Lever', 'Ashby', 'SmartRecruiters', 'Workday', 'SuccessFactors'}
 
 # Aggregators that repeatedly serve expired or low-signal listings (Indeed via
-# Apify or the plain adapter, and JSearch). They are still searched, but in the
-# digest they only fill slots left over after ATS boards and the quality
-# aggregators, so they can never dominate a day again. Matched as a substring
-# so 'Apify / Indeed', 'Indeed' and 'JSearch' all qualify.
-LOW_PRIORITY_SOURCE_MARKERS = ('indeed', 'jsearch')
+# Apify or the plain adapter, and JSearch), plus WeWorkRemotely, which fills the
+# digest with senior US software roles far outside the target. They are still
+# searched, but in the digest they only fill slots left over after ATS boards
+# and the quality aggregators, so they can never dominate a day again. Matched
+# as a substring so 'Apify / Indeed', 'Indeed' and 'JSearch' all qualify.
+LOW_PRIORITY_SOURCE_MARKERS = ('indeed', 'jsearch', 'weworkremotely')
+
+# Shown on a pump, valve or flow-equipment role, the profile most wanted. The
+# database keeps no description, so the digest recognises these from the title
+# and company; the scorer already lifted the ones it recognised from the text.
+FLOW_EQUIPMENT_MARKER = "🔧 Pump / valve / flow equipment"
 
 # Phrases a careers page or aggregator shows once a posting is gone. Presence
 # of any one marks the link expired.
@@ -57,7 +65,7 @@ EXPIRED_PAGE_MARKERS = (
 
 
 def is_low_priority_source(source):
-    """True for the demoted aggregators (Indeed / JSearch)."""
+    """True for the demoted aggregators (Indeed, JSearch, WeWorkRemotely)."""
     s = (source or '').lower()
     return any(marker in s for marker in LOW_PRIORITY_SOURCE_MARKERS)
 
@@ -452,6 +460,8 @@ def _render_job_lines(jobs):
         lines += f"   ⭐ Match: {score_pct}%\n"
         if risky:
             lines += "   ⚠️ Possible scam, verify the employer before applying\n"
+        if is_flow_equipment_role(title or '', '', company or ''):
+            lines += f"   {FLOW_EQUIPMENT_MARKER}\n"
         if source:
             lines += f"   🌐 {source}\n"
         cv_label = format_cv_label(best_cv)

@@ -65,3 +65,55 @@ class TestExtractNextData:
         assert _extract_next_data('<html>no script</html>') is None
         assert _extract_next_data(
             '<script id="__NEXT_DATA__">{bad json}</script>') is None
+
+
+class TestInfostudCityTargeting:
+    """Infostud filters a search by city when the city is added as a path
+    segment, /oglasi-za-posao-<query>/<city>. The fetch is stubbed, no network."""
+
+    def _capture(self, monkeypatch):
+        import sources.free_boards as fb
+        seen = []
+
+        class _Resp:
+            status_code = 200
+            text = ''
+
+        def fake_get(url, **kwargs):
+            seen.append(url)
+            return _Resp()
+
+        monkeypatch.setattr(fb.requests, 'get', fake_get)
+        monkeypatch.setattr(fb.time, 'sleep', lambda *_: None)
+        return fb, seen
+
+    def test_no_city_searches_nationwide(self, monkeypatch):
+        fb, seen = self._capture(monkeypatch)
+        fb.search_infostud('primer upita')
+        assert seen == ['https://poslovi.infostud.com/oglasi-za-posao-primer-upita']
+
+    def test_city_is_added_as_a_path_segment(self, monkeypatch):
+        fb, seen = self._capture(monkeypatch)
+        fb.search_infostud('primer upita', city='Test Grad')
+        assert seen == [
+            'https://poslovi.infostud.com/oglasi-za-posao-primer-upita/test-grad']
+
+    def test_regional_pass_runs_each_query_in_each_city(self, monkeypatch):
+        import sources.free_boards as fb
+        calls = []
+        monkeypatch.setattr(fb, 'search_infostud',
+                            lambda q, city=None, pages=1: calls.append((q, city)) or [])
+        monkeypatch.setattr(fb.time, 'sleep', lambda *_: None)
+        jobs = fb._run_regional_boards(['infostud'], ['test query'],
+                                       infostud_cities=['grad-a', 'grad-b'])
+        assert jobs == []
+        assert calls == [('test query', 'grad-a'), ('test query', 'grad-b')]
+
+    def test_regional_pass_without_cities_is_unchanged(self, monkeypatch):
+        import sources.free_boards as fb
+        calls = []
+        monkeypatch.setattr(fb, 'search_infostud',
+                            lambda q, city=None, pages=1: calls.append((q, city)) or [])
+        monkeypatch.setattr(fb.time, 'sleep', lambda *_: None)
+        fb._run_regional_boards(['infostud'], ['test query'], infostud_cities=[])
+        assert calls == [('test query', None)]
