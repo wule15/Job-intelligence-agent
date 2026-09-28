@@ -556,6 +556,34 @@ def _parse_infostud_jobs(data):
     return jobs
 
 
+def _parse_infostud_detail(data):
+    """Full advert text from an Infostud advert page's __NEXT_DATA__ dict.
+
+    The search results only carry a teaser of about 270 characters, which is
+    too little to score against a CV. The advert page holds the whole text as
+    HTML in job.textAd. Returns '' when it is missing, for example when the
+    advert is an image, so the caller keeps the teaser.
+    """
+    try:
+        text_ad = data['props']['pageProps']['job']['textAd']
+    except (KeyError, TypeError):
+        return ''
+    if not isinstance(text_ad, str):
+        return ''
+    import html
+    text = re.sub(r'<[^>]+>', ' ', html.unescape(text_ad))
+    return re.sub(r'\s+', ' ', html.unescape(text)).strip()
+
+
+def fetch_infostud_detail(link, session=None, timeout=(4, 8)):
+    """Fetch one Infostud advert page and return its full text, or ''."""
+    getter = session or requests
+    r = getter.get(link, headers=HEADERS, timeout=timeout)
+    if r.status_code != 200:
+        raise RuntimeError(f'HTTP {r.status_code}')
+    return _parse_infostud_detail(_extract_next_data(r.text) or {})
+
+
 def _infostud_slug(text):
     """Lowercase, hyphenated path segment, the shape Infostud's URLs use."""
     return quote(text.strip().lower().replace(' ', '-'), safe='-')

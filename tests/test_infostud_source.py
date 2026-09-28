@@ -117,3 +117,56 @@ class TestInfostudCityTargeting:
         monkeypatch.setattr(fb.time, 'sleep', lambda *_: None)
         fb._run_regional_boards(['infostud'], ['test query'], infostud_cities=[])
         assert calls == [('test query', None)]
+
+
+class TestInfostudFullDescription:
+    """Infostud search results carry a 270 character teaser, not the advert.
+    Scored on that, almost every Infostud job fell under the cutoff and none
+    reached the digest. The full text sits in the advert page's own data."""
+
+    def test_detail_parser_reads_the_full_advert(self):
+        from sources.free_boards import _parse_infostud_detail
+        data = {'props': {'pageProps': {'job': {
+            'textAd': '<h3>Sales Manager</h3><p>Prodaja gra&#273;evinske '
+                      'mehanizacije, CRM, technical sales.</p>'}}}}
+        text = _parse_infostud_detail(data)
+        assert 'Sales Manager' in text
+        assert 'technical sales' in text
+        assert '<' not in text
+
+    def test_detail_parser_bad_shape_returns_empty(self):
+        from sources.free_boards import _parse_infostud_detail
+        assert _parse_infostud_detail({}) == ''
+        assert _parse_infostud_detail(None) == ''
+        assert _parse_infostud_detail(
+            {'props': {'pageProps': {'job': {'textAd': None}}}}) == ''
+
+    def test_enrichment_replaces_the_teaser(self, monkeypatch):
+        from sources import ats
+        full = 'Full advert text about valve sizing and technical sales.'
+        monkeypatch.setitem(ats.DETAIL_FETCHERS, 'Infostud', lambda job: full)
+        job = {'source': 'Infostud', 'title': 'Sales Manager',
+               'link': 'https://poslovi.infostud.com/posao/x/y/1',
+               'description': 'Short teaser.'}
+        enriched, _ = ats.enrich_descriptions([job], should_fetch=lambda j: True)
+        assert enriched == 1
+        assert job['description'] == full
+
+    def test_empty_detail_keeps_the_teaser(self, monkeypatch):
+        """Some adverts are an image with no text. Keep what we had."""
+        from sources import ats
+        monkeypatch.setitem(ats.DETAIL_FETCHERS, 'Infostud', lambda job: '')
+        job = {'source': 'Infostud', 'title': 'T', 'link': 'u',
+               'description': 'Short teaser.'}
+        ats.enrich_descriptions([job], should_fetch=lambda j: True)
+        assert job['description'] == 'Short teaser.'
+
+    def test_other_sources_with_text_are_not_refetched(self, monkeypatch):
+        from sources import ats
+        calls = []
+        monkeypatch.setitem(ats.DETAIL_FETCHERS, 'Workday',
+                            lambda job: calls.append(job) or 'x')
+        job = {'source': 'Workday', 'title': 'T', 'link': 'u',
+               'description': 'Already has a description.'}
+        ats.enrich_descriptions([job], should_fetch=lambda j: True)
+        assert calls == []

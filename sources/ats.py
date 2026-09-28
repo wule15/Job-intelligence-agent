@@ -342,7 +342,13 @@ FETCHERS = {
 # Sources whose list endpoint returns titles without descriptions. Scoring a
 # title against a CV is close to meaningless, so these need a second request
 # per job to be comparable with sources that return full text.
-NEEDS_DETAIL_FETCH = {'SmartRecruiters', 'Workday'}
+NEEDS_DETAIL_FETCH = {'SmartRecruiters', 'Workday', 'Infostud'}
+
+# Sources whose description is only a teaser. Fetched even when the teaser is
+# there, because a two-line snippet scores almost as badly as a bare title.
+# Infostud's search results carry about 270 characters, and on that almost
+# every Infostud job fell under the score cutoff.
+SNIPPET_ONLY_SOURCES = {'Infostud'}
 
 
 def _get_detail_json(url):
@@ -392,9 +398,16 @@ def _detail_workday(job):
     return _strip_html(info.get('jobDescription', ''))
 
 
+def _detail_infostud(job):
+    """Full advert text for one Infostud job, from the page's Next.js data."""
+    from sources.free_boards import fetch_infostud_detail
+    return fetch_infostud_detail(job['link'], session=detail_session, timeout=DETAIL_TIMEOUT)
+
+
 DETAIL_FETCHERS = {
     'SmartRecruiters': _detail_smartrecruiters,
     'Workday': _detail_workday,
+    'Infostud': _detail_infostud,
 }
 
 
@@ -416,7 +429,8 @@ def enrich_descriptions(jobs, should_fetch, max_fetches=60):
     candidates = [
         job for job in jobs
         if job.get('source') in NEEDS_DETAIL_FETCH
-        and not (job.get('description') or '').strip()
+        and (job.get('source') in SNIPPET_ONLY_SOURCES
+             or not (job.get('description') or '').strip())
         and job.get('link')
         and should_fetch(job)
     ]
