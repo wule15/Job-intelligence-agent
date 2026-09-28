@@ -51,6 +51,31 @@ PURE_DEV_TITLE_MARKERS = [
 # is not. This bar self-adjusts as skills are added to the master CV.
 PURE_DEV_KEEP_SCORE = 20.0
 
+# ── Entry-level software on the home-market board ────────────────────────────
+# Junior and unranked software and QA roles on the local board are jobs the
+# candidate can apply to, but they score low against an engineering and sales
+# CV, so the rule above and the score cutoff dropped all of them. From these
+# sources only, they skip both and are lifted to ENTRY_SOFTWARE_FLOOR, the
+# digest's own minimum (MIN_DIGEST_SCORE in telegram_sender.py), so they reach
+# the regional message at the bottom of the list. Dealbreakers, export control
+# and the other hard rules still apply. The same roles from global boards are
+# untouched, which keeps the main digest from filling with junior dev jobs.
+ENTRY_SOFTWARE_SOURCES = ('Infostud',)
+ENTRY_SOFTWARE_FLOOR = 15
+
+SOFTWARE_TITLE_PATTERN = re.compile(
+    r'\b(developer|programer|programmer|software|tester|testing|qa|'
+    r'front-?end|back-?end|full[- ]?stack)\b')
+SENIOR_TITLE_PATTERN = re.compile(
+    r'\b(senior|sr|lead|principal|staff|head|architect|director|manager)\b')
+
+
+def is_entry_software_title(job_title: str) -> bool:
+    """True for a software or QA title with no senior or lead marker."""
+    title = (job_title or '').lower()
+    return bool(SOFTWARE_TITLE_PATTERN.search(title)
+                and not SENIOR_TITLE_PATTERN.search(title))
+
 # ── Work-eligibility filter ───────────────────────────────────────────────────
 # The user is a non-EU / non-US national (Serbia). A job anywhere, EU, US, UK, is
 # takeable only if they can legally work it: it either offers visa sponsorship, or
@@ -1108,12 +1133,17 @@ class JobFilter:
             # Drop a pure software-dev role only when the CV score confirms the
             # candidate has no real overlap with it. A dev role their skills DO
             # match (AI/automation/Python work) scores above the bar and stays.
-            if not always_include and score < PURE_DEV_KEEP_SCORE and self.is_dev_titled(title):
+            entry_software = (not always_include
+                              and job.get('source') in ENTRY_SOFTWARE_SOURCES
+                              and is_entry_software_title(title))
+
+            if (not always_include and not entry_software
+                    and score < PURE_DEV_KEEP_SCORE and self.is_dev_titled(title)):
                 logger.debug(f"Pure programming, low fit ({score}%): {title}")
                 rejected['pure_programming'] += 1
                 continue
 
-            if not always_include and score < min_score:
+            if not always_include and not entry_software and score < min_score:
                 rejected['below_min_score'] += 1
                 continue
 
@@ -1143,6 +1173,9 @@ class JobFilter:
             # Cap at 100: the sponsorship boost can push a high score past it,
             # and a >100% relevance reads as a bug in the digest.
             job['relevance_score'] = round(min(100, score * multiplier))
+            # A suspected scam keeps its penalty, the floor never lifts it.
+            if entry_software and not job.get('scam_risk'):
+                job['relevance_score'] = max(job['relevance_score'], ENTRY_SOFTWARE_FLOOR)
             job['best_cv'] = best_cv
             scored_jobs.append(job)
 
