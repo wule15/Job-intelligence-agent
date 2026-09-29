@@ -5,11 +5,11 @@ Ranks jobs by how well they match your CV skills.
 
 import json
 import re
-import unicodedata
 from pathlib import Path
 from core.config import Config
 from core.utils import setup_logging
 from core.synonym_map import skill_matches
+from core.multilingual import english_equivalents, fold_diacritics
 from core.cv_variants import load_variants
 
 logger = setup_logging('job_filter')
@@ -854,17 +854,6 @@ def title_prescreen(job_title: str, skills) -> bool:
     return False
 
 
-def fold_diacritics(text: str) -> str:
-    """Lowercase and strip accents, so the same word matches written either way.
-
-    NFKD splits a letter from its accent, and the accent is dropped. The
-    letter đ has no such split, so it is mapped to "dj", its usual plain form.
-    """
-    text = (text or '').lower().replace('đ', 'dj')
-    return ''.join(c for c in unicodedata.normalize('NFKD', text)
-                   if not unicodedata.combining(c))
-
-
 def is_non_english_title(job_title: str) -> bool:
     """Return True if the title contains a non-English role marker."""
     title = (job_title or '').lower()
@@ -980,6 +969,10 @@ class JobFilter:
         else:
             desc_lower = " ".join(
                 part for part in (job_title, company) if part).lower()
+        # A local-language advert gains the English equivalents of its terms,
+        # so it scores on meaning rather than on how much English it contains.
+        # English text gains nothing. See core/multilingual.py.
+        desc_lower = f"{desc_lower} {english_equivalents(desc_lower)}"
         title_lower = job_title.lower()
         best_score = 0.0
         best_cv = None
@@ -1013,6 +1006,7 @@ class JobFilter:
 
         # Sector boost, industrial / SaaS company or description
         sector_text = (job_description + ' ' + company).lower()
+        sector_text = f"{sector_text} {english_equivalents(sector_text)}"
         if best_score > 0 and any(kw in sector_text for kw in SECTOR_BOOST_KEYWORDS):
             best_score = apply_boost(best_score, SECTOR_BOOST_MULTIPLIER)
 
@@ -1028,6 +1022,7 @@ class JobFilter:
         """Best CV skill-match score from the advert text alone, title excluded.
         Used to decide whether a target-role title deserves its boost."""
         text = " ".join(p for p in (job_description, company) if p).lower()
+        text = f"{text} {english_equivalents(text)}"
         best = 0.0
         for cv_data in self.skills_data.get('cvs', {}).values():
             if not isinstance(cv_data, dict) or 'skills' not in cv_data:
