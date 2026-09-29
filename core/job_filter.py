@@ -5,6 +5,7 @@ Ranks jobs by how well they match your CV skills.
 
 import json
 import re
+import unicodedata
 from pathlib import Path
 from core.config import Config
 from core.utils import setup_logging
@@ -843,7 +844,25 @@ def title_prescreen(job_title: str, skills) -> bool:
             if len(token) > 2 and token in title:
                 return True
 
+    # Local-language role words from the user's .env, matched without
+    # diacritics so "inzenjer" catches "Inženjer" and the other way round.
+    folded = fold_diacritics(title)
+    for term in getattr(Config, 'TITLE_SCREEN_TERMS', None) or ():
+        if fold_diacritics(term) in folded:
+            return True
+
     return False
+
+
+def fold_diacritics(text: str) -> str:
+    """Lowercase and strip accents, so the same word matches written either way.
+
+    NFKD splits a letter from its accent, and the accent is dropped. The
+    letter đ has no such split, so it is mapped to "dj", its usual plain form.
+    """
+    text = (text or '').lower().replace('đ', 'dj')
+    return ''.join(c for c in unicodedata.normalize('NFKD', text)
+                   if not unicodedata.combining(c))
 
 
 def is_non_english_title(job_title: str) -> bool:

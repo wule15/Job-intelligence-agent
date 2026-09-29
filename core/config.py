@@ -213,6 +213,13 @@ class Config:
     REGIONAL_QUERIES = [
         s.strip() for s in os.getenv("REGIONAL_QUERIES", "").split(",") if s.strip()
     ]
+    # Local-language role words that let a title through the title screen, so
+    # its full advert is fetched before scoring. The screen otherwise matches
+    # only the CV's English skill words. Comma separated, matched ignoring
+    # diacritics. Empty by default. Personal, read from .env.
+    TITLE_SCREEN_TERMS = [
+        s.strip() for s in os.getenv("TITLE_SCREEN_TERMS", "").split(",") if s.strip()
+    ]
 
     @classmethod
     def validate(cls):
