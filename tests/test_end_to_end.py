@@ -188,13 +188,30 @@ class TestOneDay:
         messages = run_day(pipeline, monkeypatch)
         assert messages, 'the crash in one source ended the whole run'
 
+    def test_a_crashing_source_is_named_in_the_chat(self, pipeline, monkeypatch):
+        chat = '\n'.join(run_day(pipeline, monkeypatch))
+        assert 'Source health' in chat
+        assert 'Apify' in chat
+        assert 'monthly usage hard limit' in chat
+
+
+JOB_TITLES = ('Sales Engineer, Industrial Valves', 'Technical Writer',
+              'Inženjer prodaje', 'Maintenance Planner')
+
 
 class TestAcrossDays:
-    def test_nothing_is_sent_twice(self, pipeline, monkeypatch):
-        first = run_day(pipeline, monkeypatch)
+    def test_no_job_is_sent_twice(self, pipeline, monkeypatch):
+        first = '\n'.join(run_day(pipeline, monkeypatch))
+        second = '\n'.join(run_day(pipeline, monkeypatch))
+        assert all(title in first for title in JOB_TITLES)
+        assert not any(title in second for title in JOB_TITLES)
+
+    def test_a_quiet_day_still_reports_a_broken_source(self, pipeline, monkeypatch):
+        """No new jobs on day two, but Apify is still down: the note goes alone."""
+        run_day(pipeline, monkeypatch)
         second = run_day(pipeline, monkeypatch)
-        assert first
-        assert second == []
+        assert len(second) == 1
+        assert 'Apify' in second[0]
 
     def test_a_failed_send_is_retried_next_day(self, pipeline, monkeypatch):
         failed = run_day(pipeline, monkeypatch, status=500)

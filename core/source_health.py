@@ -10,6 +10,7 @@ A source that quietly dies and a genuinely slow week look identical unless
 something records yield per source over time. That is all this module does.
 """
 
+import re
 import sqlite3
 import time
 from contextlib import contextmanager
@@ -194,6 +195,49 @@ def stale_sources(db_path=None, runs=STALE_AFTER_EMPTY_RUNS):
         conn.close()
 
     return stale
+
+
+def _short_error(error):
+    """An error trimmed for a chat message, with every URL removed.
+
+    A request exception carries the URL it failed on, and some sources put
+    their API key in the query string. The digest goes to a chat, so no URL
+    ever reaches it.
+    """
+    return re.sub(r'https?://\S+', '<url>', error or '')[:70].strip()
+
+
+def health_alerts(db_path=None, runs=STALE_AFTER_EMPTY_RUNS):
+    """
+    One line per source that needs attention, for the daily digest.
+
+    A source is named when it raised an error in the latest run, or when it
+    has returned nothing for `runs` runs in a row. A single empty run is not
+    named: a quiet day is normal, and naming it would make the note noise.
+    Each source appears at most once. Returns [] when every source is fine.
+    """
+    conn = sqlite3.connect(db_path or Config.DATABASE_PATH)
+    try:
+        failed_now = conn.execute(
+            '''SELECT source, error FROM source_runs
+               WHERE run_at = (SELECT MAX(run_at) FROM source_runs)
+                 AND error IS NOT NULL AND error != '' ''',
+        ).fetchall()
+    finally:
+        conn.close()
+
+    alerts, named = [], set()
+    for source, count, last_error in stale_sources(db_path=db_path, runs=runs):
+        line = f"{source}: no jobs in {count} runs"
+        if last_error:
+            line += f" ({_short_error(last_error)})"
+        alerts.append(line)
+        named.add(source)
+    for source, error in failed_now:
+        if source not in named:
+            alerts.append(f"{source}: failed this run ({_short_error(error)})")
+            named.add(source)
+    return alerts
 
 
 def recovered_sources(results, db_path=None, runs=STALE_AFTER_EMPTY_RUNS):

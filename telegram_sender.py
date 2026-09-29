@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Send job digest summary to Telegram - only NEW jobs (no duplicates)."""
 
+import html
 import ipaddress
 import socket
 import sqlite3
@@ -11,6 +12,7 @@ from urllib.parse import urljoin, urlparse
 
 import requests
 
+from core import source_health
 from core.config import Config
 from core.job_filter import (
     ALWAYS_INCLUDE_SOURCES, is_flow_equipment_role, matches_region, scam_risk,
@@ -526,6 +528,27 @@ def format_regional_digest(jobs):
     message += _render_job_lines(jobs)
     return message, job_ids
 
+def format_health_note(alerts):
+    """The source health note appended to the digest, or '' when all is well.
+
+    Escaped, because the message is sent as HTML and an error string can
+    contain angle brackets.
+    """
+    if not alerts:
+        return ''
+    lines = '\n'.join(f"• {html.escape(alert)}" for alert in alerts)
+    return f"\n⚠️ <b>Source health</b>\n{lines}\n"
+
+
+def _health_note():
+    """The note for this run. A failure here must never stop the digest."""
+    try:
+        return format_health_note(source_health.health_alerts())
+    except Exception as e:
+        print(f"[!] Could not read source health: {type(e).__name__}")
+        return ''
+
+
 def main():
     force_utf8_streams()  # Serbian job titles must not crash a cp1252 console/log
     print("[*] Initializing Telegram tracking...")
@@ -576,9 +599,18 @@ def main():
 
     digest, job_ids = format_job_digest(jobs)
 
+    # A broken source is named in the chat, not only in the log. On a day with
+    # no main digest the note goes out alone, so a dead source is never silent.
+    health = _health_note()
+
     if not job_ids:
         print("[*] No new jobs to send")
+        if health:
+            print("[*] Sending source health note...")
+            send_telegram_message(health.strip())
         return
+
+    digest += health
 
     print(f"[*] Found {len(job_ids)} new jobs to send")
     print("[*] Sending to Telegram...")
