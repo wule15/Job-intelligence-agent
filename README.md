@@ -62,13 +62,17 @@ ENRICH
   Some boards return a title and no description. Scoring those measures
   how much text the source returned, not how well the job fits. A cheap
   title screen decides which are worth a second request, then the full
-  description is fetched for those only.
+  description is fetched for those only. Boards that return only a short
+  teaser are fetched too. The screen also accepts local-language role
+  words listed in .env, matched without diacritics.
       |
       v
 SCORE
   Each job is scored against every CV separately. Best CV wins and is
   recorded. Multipliers for a target role in the title and for an
-  industrial or B2B sector match.
+  industrial or B2B sector match. A Serbian or German advert gains the
+  English equivalents of the terms it uses, from a small glossary, so it
+  is scored on meaning rather than on how much English it contains.
       |
       v
 FILTER
@@ -85,11 +89,13 @@ STORE
       |
       v
 DELIVER
-  Two Telegram messages. A main digest (company boards, then quality
+  Up to three Telegram messages. A main digest (company boards, then quality
   aggregators, then wildcard, at most 2 per employer, every slot score-gated),
-  and a separate "Direct company openings" shortlist drawn only from the
-  employer boards. Indeed and JSearch are demoted to a last-resort fill so they
-  cannot crowd out the better sources. Expired links are dropped before sending.
+  a separate "Direct company openings" shortlist drawn only from the employer
+  boards, and a regional message for jobs in the user's own region. Indeed and
+  JSearch are demoted to a last-resort fill so they cannot crowd out the better
+  sources. Expired links are dropped before sending. A source that failed this
+  run, or returned nothing for three runs, is named at the end of the digest.
       |
       v
 TRACK
@@ -116,11 +122,11 @@ Only what is in the code.
 
 **Retries transient failures.** 408, 429, 500, 502, 503, 504 and connection errors, with exponential backoff, and it obeys a `Retry-After` header when the server sends one. 401, 403 and 404 are deliberately not retried, because repeating a request the server already rejected wastes quota.
 
-**Reports its own health.** Each run prints a per-source table and writes it to the database. It warns when one source produces more than 90 percent of results, and names any source that has returned nothing for three consecutive runs, with how many days it has been quiet and its last error. A source that recovers is reported too, because several are free monthly tiers that reset on their own.
+**Reports its own health.** Each run prints a per-source table and writes it to the database. It warns when one source produces more than 90 percent of results, and names any source that has returned nothing for three consecutive runs, with how many days it has been quiet and its last error. A source that recovers is reported too, because several are free monthly tiers that reset on their own. The same failures are named at the end of the daily Telegram digest, or in a message of their own on a day with no new jobs, with every URL stripped from the error text because a request error can carry an API key.
 
 **Deduplicates on normalised values.** URLs lose their tracking parameters. Titles lose `(Remote)`, `(m/w/d)`, employment type and trailing locations. Companies lose `Inc`, `GmbH`, `B.V.`, `d.o.o.` and about thirty other legal suffixes. Seniority is deliberately preserved: Senior Sales Engineer and Sales Engineer stay two jobs, and there is a test enforcing it.
 
-**Scores per CV, not once.** For each CV it counts how many of that CV's skills appear in the job text, divided by a denominator capped at 15, because a job description will never mention all fifty. The best-scoring CV is stored with the job so the digest can say which one to send.
+**Scores per CV, not once.** For each CV it counts how many of that CV's skills appear in the job text, divided by a denominator capped at 25, because a job description will never mention all fifty. The best-scoring CV is stored with the job so the digest can say which one to send.
 
 **Composes a digest by quota.** Guaranteed slots for company boards, aggregators and wildcard, capped at two per employer. A quota is a ceiling and never a floor: if only two board jobs clear the score bar, you get two, and the run says why the rest went unfilled. Indeed and JSearch are demoted to a last-resort fill so a noisy aggregator cannot take over the day, and a second message carries a shortlist drawn only from the employer boards.
 
@@ -137,6 +143,7 @@ Only what is in the code.
 - No web UI beyond a local Flask dashboard.
 - No proxy rotation or CAPTCHA handling. A source that blocks scraping stays blocked.
 - Scoring is keyword matching with multipliers. There are no embeddings and no semantic similarity.
+- Local-language adverts are understood only through a hand-written glossary. A Serbian or German term that is not in it is not understood, and no other language is covered.
 - Deduplication is normalised string matching, not fuzzy across companies. The same job at two subsidiaries with different legal names will appear twice.
 - Cover letters are generated, not sent. Nothing is submitted on your behalf.
 
@@ -224,7 +231,9 @@ Python 3.11 or newer, no framework.
 | Tests | pytest |
 | Normalisation | standard library only, `re` and `urllib.parse` |
 
-241 tests, covering scoring, filtering, deduplication, storage, source health, digest composition, the scam screen, the SSRF guard on link checking, retry policy and three regressions that each cost real results. Every test runs against fixtures and temporary files. No test touches a real database or makes a network call.
+407 tests, covering scoring, filtering, deduplication, storage, source health, digest composition, the scam screen, the SSRF guard on link checking, retry policy, local-language scoring and three regressions that each cost real results. Every test runs against fixtures and temporary files. No test touches a real database or makes a network call.
+
+One file, `tests/test_end_to_end.py`, runs a whole day through the real pipeline in order: search, dedup, description fetch, scoring, storage, digest selection and sending. Only the edges are replaced: fake job boards (one of which crashes), a temporary database, and Telegram's HTTP call captured instead of sent. It then checks what would have reached the chat: the strong match is there once, the weak match and the dealbreaker are not, the local-language advert lands in the regional message, the crashing source is named, nothing repeats the next day, and a failed send is retried. Each of those checks was confirmed to fail when the rule it guards is switched off.
 
 The connectors have tests now. Not by mocking ten third-party APIs, which is a larger job than this project justifies, but by capturing one real response per source, trimming it to two jobs, and asserting on the record the parser produces. That covers the half of a connector that breaks silently: the mapping from somebody else's JSON shape into ours.
 
@@ -299,7 +308,7 @@ fallback.
 
 ```bash
 python validate_system.py     # configuration and connectivity
-pytest                        # 241 tests, no network
+pytest                        # 407 tests, no network
 python job_search_smart.py    # one real run
 ```
 
@@ -372,9 +381,9 @@ JSON.
 
 ![Daily digest in Telegram](docs/telegram-digest.png)
 
-Up to ten in the main digest plus a separate direct-from-company shortlist, capped at two per employer, each one carrying the score and which CV scored it.
+Up to ten in the main digest plus a separate direct-from-company shortlist and a regional message, capped at two per employer, each one carrying the score and which CV scored it.
 
-The percentages are a ranking device, not a probability. A score is the count of that CV's skill terms appearing in the job text over a denominator capped at 15, so 43 percent means roughly six or seven terms matched, not that the job is a 43 percent fit. It exists to order the list and to fill the quota, and the known weaknesses section below is honest about what it cannot see.
+The percentages are a ranking device, not a probability. A score is the count of that CV's skill terms appearing in the job text over a denominator capped at 25, so 40 percent means roughly ten terms matched, not that the job is a 43 percent fit. It exists to order the list and to fill the quota, and the known weaknesses section below is honest about what it cannot see.
 
 ---
 
