@@ -1,0 +1,54 @@
+# Anything listed here never reaches the build context, so it cannot end up in
+# an image layer. This matters more than .gitignore does: a file deleted in a
+# later build step is still recoverable from the layer that added it.
+#
+# A pattern matches from the context root only, so each one that could also
+# sit in a subfolder, core/ above all, is written with **/.
+
+# Secrets
+**/.env
+**/.env.*
+!.env.example
+**/*.bak*
+**/credentials.json
+**/token.json
+**/client_secret*.json
+**/*.pem
+**/*.p12
+**/*.key
+git.txt
+**/*token*.txt
+**/*.token
+
+# Runtime and personal data. This project runs against one person's real job
+# search, CV and company list. They are mounted at run time instead.
+**/data/
+**/*.db
+**/*.db-wal
+**/*.db-shm
+**/*.sqlite3
+**/logs/
+**/output/
+**/cache/
+local/
+**/master-cv.yaml
+**/companies.json
+
+# Version control. Also keeps the image from carrying the whole history.
+.git/
+.gitignore
+.github/
+
+# Local tooling and build noise
+**/__pycache__/
+**/*.pyc
+.pytest_cache/
+.venv/
+venv/
+*.egg-info/
+
+# Not needed at runtime
+tests/
+docs/
+requirements-dev.txt
+README.md

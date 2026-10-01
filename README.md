@@ -375,6 +375,42 @@ been relisted. From there you can:
 A `/stats` endpoint returns totals, source count, and average and top score as
 JSON.
 
+**9. Optional, run it in a container.**
+
+```bash
+docker build -t job-agent .
+docker run --rm --env-file core/.env -e TZ=CET-1CEST,M3.5.0,M10.5.0/3   -v "$(pwd)/core/data:/app/core/data"   -v "$(pwd)/core/config/companies.json:/app/core/config/companies.json:ro"   -v "$(pwd)/core/master-cv.yaml:/app/core/master-cv.yaml:ro"   job-agent
+```
+
+The container does what the scheduled task does on the host: one search, then
+the Telegram digest. Tested on 2026-10-01 with real settings: a full run inside
+the container read 2,448 jobs, kept 174 and sent the three digest messages.
+
+Credentials arrive at runtime through `--env-file`. The database, the company
+list and the CV file stay on the host and are mounted, the last two read-only.
+None of them is ever copied into the image. The paths sit under `core/`
+because `core/config.py` resolves everything relative to itself.
+
+That is what `.dockerignore` is for, and it is doing more work than it looks
+like. Excluding a file from a build context is not the same as excluding it
+from git. A build context is copied wholesale before the first instruction
+runs, and anything it carries into a layer stays in that layer even if a later
+step deletes it. So `.env` files, credentials, databases, the CV and the
+company list are kept out at the boundary rather than cleaned up afterwards,
+because afterwards is too late. Every pattern is written with `**/`, because a
+plain `.env` pattern only matches at the top of the build context and would let
+`core/.env` through.
+
+`TZ` sets the clock the log and digest timestamps use. The slim image has no
+time zone database, so it takes a POSIX rule rather than a name like
+`Europe/Berlin`; the one above is Central European time with summer time.
+Without it the container runs on UTC.
+
+The image pins Python 3.12 rather than tracking latest, so a new release cannot
+change the behaviour of a scheduled run without anyone touching the code, and
+it runs as a non-root user with a fixed uid so a volume written inside the
+container stays readable on the host.
+
 ---
 
 ## The daily digest
