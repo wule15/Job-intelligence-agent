@@ -38,6 +38,34 @@ FAKE_SKILLS = {
 }
 
 
+@pytest.fixture(autouse=True)
+def public_default_settings(monkeypatch):
+    """Every test starts from the public defaults, not the user's settings.
+
+    core/config.py reads core/.env when it is imported, so in a deployment
+    folder the user's own countries, languages and score bars would leak in
+    and decide what a test sees. A test that needs a setting sets it itself.
+    """
+    from core.config import Config
+    defaults = {
+        'ALLOWED_COUNTRIES': [], 'SPONSORSHIP_ONLY_COUNTRIES': [],
+        'WORK_ELIGIBLE_REGIONS': [], 'EXCLUDED_LOCATIONS': [],
+        'NON_FLUENT_LANGUAGES': [], 'UNREADABLE_ADVERT_LANGUAGES': [],
+        'EXCLUDED_TITLE_TERMS': [], 'DROP_LOCAL_TRADE_TITLES': False,
+        'NON_EUROPE_PREFERENCE': 1.0, 'DIGEST_EXCLUDE_FILE': '',
+        'DIGEST_MIN_SCORE': 15.0, 'REGIONAL_MIN_SCORE': 15.0,
+        'EARLY_CAREER_QUERIES': False, 'DIGEST_LABEL': '',
+        'REGIONAL_DIGEST_LABEL': 'Regional jobs', 'REGIONAL_JOB_LOCATIONS': [],
+        'REGIONAL_MATCH_TERMS': [], 'REGIONAL_BOARDS': [], 'INFOSTUD_CITIES': [],
+        'REGIONAL_QUERIES': [], 'TITLE_SCREEN_TERMS': [], 'SERPAPI_QUERIES': [],
+    }
+    for name, value in defaults.items():
+        monkeypatch.setattr(Config, name, value, raising=False)
+    # The sender keeps a module copy of the bar, read once at import.
+    import telegram_sender
+    monkeypatch.setattr(telegram_sender, 'MIN_DIGEST_SCORE', 15.0, raising=False)
+
+
 @pytest.fixture
 def job_filter():
     """A JobFilter with a known skills profile, not the real CV cache."""
