@@ -31,6 +31,7 @@ import job_search_smart  # noqa: E402
 import telegram_sender  # noqa: E402
 from core.config import Config  # noqa: E402
 from core.database import Database  # noqa: E402
+from core.job_normalize import dedup_key  # noqa: E402
 from core.job_validator import JobValidator  # noqa: E402
 from sources import ats  # noqa: E402
 
@@ -125,8 +126,11 @@ def pipeline(tmp_path, monkeypatch):
 
     # The advert page fetch for the local board, the only detail fetch here.
     monkeypatch.setitem(ats.DETAIL_FETCHERS, 'Infostud', lambda job: LOCAL_FULL_ADVERT)
-    # Link liveness is a network check. Every link here is live.
+    # Link liveness is a network check: the vendor API for company boards,
+    # the page for everything else. Every posting here is still open.
     monkeypatch.setattr(telegram_sender, 'check_link_live', lambda url, timeout=6: True)
+    monkeypatch.setattr(telegram_sender, 'posting_is_open',
+                        lambda link, source, company='': True)
 
     searcher = job_search_smart.SmartJobSearcher.__new__(job_search_smart.SmartJobSearcher)
     searcher.ats = FakeSource([STRONG])
@@ -143,6 +147,10 @@ def pipeline(tmp_path, monkeypatch):
         s for cv in FAKE_SKILLS['cvs'].values() for s in cv['skills']}
     searcher.validator = JobValidator()
     searcher.db = Database()
+    # The full schema, as the live database has it. Without it the daily
+    # cleanup fails on its first table and never runs, which hid from this
+    # test the way a cleaned-up job used to be sent a second time.
+    searcher.db.init_database()
     searcher.skills_data = FAKE_SKILLS
     searcher.build_search_queries = lambda: ['sales engineer', 'technical writer valves']
     searcher.extract_top_skills = lambda limit=10: ['technical sales']
@@ -218,3 +226,50 @@ class TestAcrossDays:
         assert failed, 'the run should still have tried to send'
         retried = '\n'.join(run_day(pipeline, monkeypatch))
         assert 'Sales Engineer, Industrial Valves' in retried
+
+
+def age_every_job(searcher, days=8):
+    """Make every stored job look first stored `days` ago."""
+    searcher.db.connection.execute(
+        "UPDATE jobs SET extracted_date = datetime('now', ?)", (f'-{days} days',))
+    searcher.db.connection.commit()
+
+
+class TestRepostAfterCleanup:
+    """The daily cleanup deletes week-old rows. A job still advertised a week
+    later, back under a new link, must not reach the chat a second time."""
+
+    REPOST_LINK = 'https://boards.greenhouse.io/valveco/jobs/2'
+
+    def test_a_reposted_job_is_not_sent_again(self, pipeline, monkeypatch, capsys):
+        first = '\n'.join(run_day(pipeline, monkeypatch))
+        assert 'Sales Engineer, Industrial Valves' in first
+        age_every_job(pipeline)
+        pipeline.ats = FakeSource([{**STRONG, 'link': self.REPOST_LINK}])
+        capsys.readouterr()
+        second = '\n'.join(run_day(pipeline, monkeypatch))
+        assert 'Sales Engineer, Industrial Valves' not in second
+        repeat_lines = [l for l in capsys.readouterr().out.splitlines() if l.startswith('[repeat]')]
+        assert repeat_lines and 'Sales Engineer, Industrial Valves' in repeat_lines[0]
+
+    def test_the_send_record_survives_the_cleanup(self, pipeline, monkeypatch):
+        run_day(pipeline, monkeypatch)
+        age_every_job(pipeline)
+        pipeline.db.cleanup_old_entries(days=7)
+        conn = pipeline.db.connection
+        assert conn.execute('SELECT COUNT(*) FROM telegram_sent_jobs').fetchone()[0] == 0
+        history = [tuple(r) for r in conn.execute('SELECT dedup_key, link FROM sent_history')]
+        assert (dedup_key(STRONG['title'], STRONG['company']), STRONG['link']) in history
+
+
+class TestRunLog:
+    def test_every_sent_job_is_logged_with_its_full_link(self, pipeline, monkeypatch, capsys):
+        run_day(pipeline, monkeypatch)
+        lines = [l for l in capsys.readouterr().out.splitlines()
+                 if l.startswith(('[direct]', '[regional]', '[main]'))]
+        assert len(lines) >= 4
+        conn = pipeline.db.connection
+        for line in lines:
+            job_id = int(line.split('id=')[1].split(' ')[0])
+            link = conn.execute('SELECT link FROM jobs WHERE id = ?', (job_id,)).fetchone()[0]
+            assert line.endswith(f'| {link}'), line

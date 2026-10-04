@@ -47,28 +47,48 @@ def set_terms(monkeypatch, match_terms=None, locations=None):
 
 
 class TestMatchesRegion:
-    def test_substring_case_insensitive(self):
-        assert matches_region('Beograd, Serbia', ['serbia'])
-        assert matches_region('NOVI SAD', ['novi sad'])
+    def test_case_insensitive(self):
+        assert matches_region('Kragujevac, Serbia', ['serbia'])
+        assert matches_region('BANJA LUKA', ['banja luka'])
+
+    def test_a_term_inside_another_word_does_not_match(self):
+        # A three-letter town term matched inside "Cinisello", so an Italian
+        # finance job reached the regional digest. Terms match whole words.
+        location = 'Cinisello Balsamo, Other/Not Applicable, Italy'
+        assert not matches_region(location, ['Sel'])
+        assert not matches_region('Barcelona, Spain', ['bar'])
+        assert matches_region('Bar, Montenegro', ['bar'])
+
+    def test_accents_are_ignored_both_ways(self):
+        assert matches_region('Šel, Serbia', ['Sel'])
+        assert matches_region('Sel, Serbia', ['Šel'])
+        assert matches_region('Inđija, Serbia', ['indjija'])
+        assert matches_region('Indjija, VO, Serbia', ['Inđija'])
+
+    def test_a_term_of_several_words(self):
+        assert matches_region('Banja-Luka, Bosnia and Herzegovina', ['banja luka'])
+        assert matches_region('Sarajevo, Bosnia and Herzegovina',
+                              ['bosnia and herzegovina'])
+        assert not matches_region('Banja, Serbia', ['banja luka'])
 
     def test_no_match(self):
         assert not matches_region('Berlin, Germany', ['serbia', 'bosnia'])
 
     def test_empty_inputs_never_match(self):
         assert not matches_region('', ['serbia'])
-        assert not matches_region('Beograd', [])
+        assert not matches_region('Kragujevac', [])
         assert not matches_region(None, ['serbia'])
 
 
 class TestRegionalSelection:
     def test_inert_without_terms(self, db, monkeypatch):
         set_terms(monkeypatch, match_terms=[], locations=[])
-        add(db, 'Sales Engineer', 'Acme', 80.0, 'Beograd, Serbia')
+        add(db, 'Sales Engineer', 'Acme', 80.0, 'Kragujevac, Serbia')
         assert telegram_sender.get_regional_jobs() == []
 
     def test_selects_only_matching_locations(self, db, monkeypatch):
-        set_terms(monkeypatch, match_terms=['serbia', 'beograd', 'sarajevo'])
-        add(db, 'RS Job', 'Acme', 80.0, 'Beograd, Serbia')
+        set_terms(monkeypatch, match_terms=['serbia', 'kragujevac', 'sarajevo'])
+        add(db, 'RS Job', 'Acme', 80.0, 'Kragujevac, Serbia')
         add(db, 'BA Job', 'Beta', 70.0, 'Sarajevo, Bosnia and Herzegovina')
         add(db, 'DE Job', 'Gamma', 90.0, 'Berlin, Germany')
         titles = [j[1] for j in telegram_sender.get_regional_jobs()]
@@ -77,18 +97,18 @@ class TestRegionalSelection:
 
     def test_falls_back_to_locations_when_no_match_terms(self, db, monkeypatch):
         set_terms(monkeypatch, match_terms=[], locations=['Serbia'])
-        add(db, 'RS Job', 'Acme', 80.0, 'Beograd, Serbia')
+        add(db, 'RS Job', 'Acme', 80.0, 'Kragujevac, Serbia')
         assert [j[1] for j in telegram_sender.get_regional_jobs()] == ['RS Job']
 
     def test_score_gate_applies(self, db, monkeypatch):
         set_terms(monkeypatch, match_terms=['serbia'])
-        add(db, 'Weak', 'Acme', 3.0, 'Beograd, Serbia')
+        add(db, 'Weak', 'Acme', 3.0, 'Kragujevac, Serbia')
         assert telegram_sender.get_regional_jobs() == []
 
     def test_per_company_cap(self, db, monkeypatch):
         set_terms(monkeypatch, match_terms=['serbia'])
         for i in range(5):
-            add(db, f'Job {i}', 'SameCorp', 80.0 - i, 'Beograd, Serbia')
+            add(db, f'Job {i}', 'SameCorp', 80.0 - i, 'Kragujevac, Serbia')
         jobs = telegram_sender.get_regional_jobs()
         assert len(jobs) == telegram_sender.MAX_PER_COMPANY
 
@@ -96,13 +116,23 @@ class TestRegionalSelection:
         msg, ids = telegram_sender.format_regional_digest([])
         assert msg == '' and ids == []
 
+    def test_whole_words_and_accents_in_the_query(self, db, monkeypatch):
+        """The query picks its candidates with the same rule as matches_region.
+        A plain LIKE kept the Italian row, and missed the row written with an
+        accent when the term has none."""
+        set_terms(monkeypatch, match_terms=['Sel'])
+        add(db, 'Assistant Business Controller', 'Acme', 90.0,
+            'Cinisello Balsamo, Other/Not Applicable, Italy')
+        add(db, 'Sales Engineer', 'Beta', 80.0, 'Šel, Serbia')
+        assert [j[1] for j in telegram_sender.get_regional_jobs()] == ['Sales Engineer']
+
     def test_not_starved_by_higher_scoring_nonregional(self, db, monkeypatch):
         """The fix for the top-N-by-score window: many higher-scoring non-region
         jobs beyond the LIMIT must not hide a lower-scoring region job."""
         set_terms(monkeypatch, match_terms=['serbia'])
         for i in range(410):  # more than the query's LIMIT of 400
             add(db, f'Remote {i}', f'Corp {i}', 90.0, 'Berlin, Germany')
-        add(db, 'RS Job', 'Acme', 40.0, 'Beograd, Serbia')  # rank ~411 by score
+        add(db, 'RS Job', 'Acme', 40.0, 'Kragujevac, Serbia')  # rank ~411 by score
         titles = [j[1] for j in telegram_sender.get_regional_jobs()]
         assert 'RS Job' in titles
 
@@ -117,13 +147,13 @@ class TestBackfillAndCrossMessageDedup:
         # A later sighting of the same job supplies the location: ON CONFLICT
         # backfills it, and it becomes regional.
         db.add_job('Sales Engineer', 'Acme', 'd', 'https://x/1',
-                   source='Adzuna', relevance_score=80, location='Beograd, Serbia')
+                   source='Adzuna', relevance_score=80, location='Kragujevac, Serbia')
         assert [j[1] for j in telegram_sender.get_regional_jobs()] == ['Sales Engineer']
 
     def test_backfill_never_overwrites_a_good_location(self, db, monkeypatch):
         set_terms(monkeypatch, match_terms=['serbia', 'germany'])
         db.add_job('Dev', 'Acme', 'd', 'https://x/2',
-                   source='Adzuna', relevance_score=80, location='Beograd, Serbia')
+                   source='Adzuna', relevance_score=80, location='Kragujevac, Serbia')
         # A re-sighting with a different location must not clobber the stored one.
         db.add_job('Dev', 'Acme', 'd', 'https://x/2',
                    source='Adzuna', relevance_score=80, location='Berlin, Germany')
@@ -134,7 +164,7 @@ class TestBackfillAndCrossMessageDedup:
         """A Serbia job from an ATS board goes in the direct message; once that
         marks it sent, the regional query excludes it. No cross-message dup."""
         set_terms(monkeypatch, match_terms=['serbia'])
-        add(db, 'QA Engineer', 'Acme', 80.0, 'Beograd, Serbia', source='Workday')
+        add(db, 'QA Engineer', 'Acme', 80.0, 'Kragujevac, Serbia', source='Workday')
         direct = telegram_sender.get_direct_jobs()
         assert [j[1] for j in direct] == ['QA Engineer']
         telegram_sender.mark_jobs_sent([j[0] for j in direct])

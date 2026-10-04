@@ -19,11 +19,13 @@ the careers page URL:
 """
 
 import json
+import re
 import time
 from pathlib import Path
-from urllib.parse import urlparse
+from urllib.parse import parse_qs, urlparse
 
 from core.config import Config
+from core.countries import is_remote_place, iso_name, successfactors_location, with_countries
 from core.http_client import build_session
 from core.job_normalize import canonical_url
 from core.utils import setup_logging
@@ -97,6 +99,30 @@ def _get_json(url):
     return response.json()
 
 
+def _greenhouse_location(item):
+    """
+    The location name, with the office countries it lacks appended.
+
+    Greenhouse's location name is free text set by the employer, often a bare
+    city ("San Francisco"). The office records carry the country as the last
+    part of their location ("San Francisco, California, United States"), so
+    that is added in brackets for the country allow-list to read.
+
+    Not for a remote job: the offices say where the company sits, not where
+    a remote hire may live, and "Remote (United States)" would be read as a
+    US job.
+    """
+    name = (item.get('location') or {}).get('name') or 'Not stated'
+    if is_remote_place(name):
+        return name
+    countries = []
+    for office in item.get('offices') or ():
+        office_location = (office or {}).get('location') or ''
+        if office_location.strip():
+            countries.append(office_location.rsplit(',', 1)[-1].strip())
+    return with_countries(name, countries)
+
+
 def fetch_greenhouse(slug, company_name=None, max_jobs=None):
     data = _get_json(GREENHOUSE_URL.format(slug=slug))
     jobs = []
@@ -106,7 +132,7 @@ def fetch_greenhouse(slug, company_name=None, max_jobs=None):
             'company': company_name or slug,
             'description': _strip_html(item.get('content', '')),
             'link': canonical_url(item.get('absolute_url', '')),
-            'location': (item.get('location') or {}).get('name', 'Not stated'),
+            'location': _greenhouse_location(item),
             'salary': None,
             'source': 'Greenhouse',
             'date_posted': item.get('updated_at'),
@@ -132,6 +158,20 @@ def fetch_lever(slug, company_name=None, max_jobs=None):
     return jobs
 
 
+def _ashby_country(record):
+    address = ((record or {}).get('address') or {}).get('postalAddress') or {}
+    return address.get('addressCountry') or ''
+
+
+def _ashby_location(item):
+    """The location name, with the address countries of the primary and
+    secondary locations appended when the name lacks them."""
+    countries = [_ashby_country(item)]
+    countries += [_ashby_country(extra) for extra in item.get('secondaryLocations') or ()
+                  if isinstance(extra, dict)]
+    return with_countries(item.get('location') or 'Not stated', countries)
+
+
 def fetch_ashby(slug, company_name=None, max_jobs=None):
     data = _get_json(ASHBY_URL.format(slug=slug))
     jobs = []
@@ -141,7 +181,7 @@ def fetch_ashby(slug, company_name=None, max_jobs=None):
             'company': company_name or slug,
             'description': _strip_html(item.get('descriptionPlain') or ''),
             'link': canonical_url(item.get('jobUrl', '')),
-            'location': item.get('location', 'Not stated'),
+            'location': _ashby_location(item),
             'salary': (item.get('compensation') or {}).get('summary'),
             'source': 'Ashby',
             'date_posted': item.get('publishedAt'),
@@ -168,8 +208,16 @@ def fetch_smartrecruiters(slug, company_name=None, max_jobs=300):
 
         for item in content:
             location = item.get('location') or {}
+            # fullLocation reads "Kurli, MH, India". Without it, the city and
+            # the country's name: the bare lowercase code this used to keep
+            # ("Pune, in", "Stuttgart, de") read as US state codes downstream
+            # and hid the country from the location rules.
             city = location.get('city') or ''
             country = location.get('country') or ''
+            country_name = iso_name(country) or country
+            place = (location.get('fullLocation')
+                     or ', '.join(p for p in (city, country_name) if p)
+                     or 'Not stated')
             jobs.append({
                 'title': item.get('name', ''),
                 'company': company_name or slug,
@@ -179,7 +227,7 @@ def fetch_smartrecruiters(slug, company_name=None, max_jobs=300):
                     'jobDescription', {}).get('text', '') if item.get('jobAd') else '',
                 'link': canonical_url(
                     f"https://jobs.smartrecruiters.com/{slug}/{item.get('id', '')}"),
-                'location': ', '.join(p for p in (city, country) if p) or 'Not stated',
+                'location': place,
                 'salary': None,
                 'source': 'SmartRecruiters',
                 'date_posted': item.get('releasedDate'),
@@ -281,8 +329,12 @@ def _sf_jobs_from_stream(fileobj, company_name, slug, max_jobs):
             continue
         title = (elem.findtext('title') or '').strip()
         link = (elem.findtext('link') or '').strip()
-        location = (elem.findtext(SF_GOOGLE_NS + 'location')
-                    or elem.findtext('location') or 'Not stated')
+        # The feed writes "City, REGION, CC, postcode". The postcode is
+        # removed and the ISO code spelled out, so the location rules read
+        # the country and not the region code.
+        location = successfactors_location(
+            elem.findtext(SF_GOOGLE_NS + 'location')
+            or elem.findtext('location') or 'Not stated')
         jobs.append({
             'title': title,
             'company': company_name or slug,
@@ -350,6 +402,18 @@ NEEDS_DETAIL_FETCH = {'SmartRecruiters', 'Workday', 'Infostud'}
 # every Infostud job fell under the score cutoff.
 SNIPPET_ONLY_SOURCES = {'Infostud'}
 
+# The teaser-only sources get their own fetch budget, spent first. They used
+# to share the 60 fetches with the company boards and came last in the list,
+# and live runs had 121 to 148 jobs waiting, so the local board's adverts
+# kept their teaser, failed the score, and the regional digest fell from 15
+# jobs to 2. One day's local search passes about 60 adverts through the title
+# screen, and an advert page takes about half a second, so 100 fetches in 60
+# seconds covers a full day with room to spare. The whole enrichment pass
+# ends within SNIPPET_BUDGET_SECS plus DETAIL_BUDGET_SECS, plus at most one
+# request timeout for each.
+SNIPPET_MAX_FETCHES = 100
+SNIPPET_BUDGET_SECS = 60
+
 
 def _get_detail_json(url):
     """One detail fetch: short timeout, no retries, JSON back."""
@@ -384,17 +448,31 @@ def _detail_smartrecruiters(job):
         f'https://api.smartrecruiters.com/v1/companies/{slug}/postings/{posting_id}')
 
     sections = (data.get('jobAd') or {}).get('sections') or {}
+    # additionalInformation is where employers put work-authorization lines
+    # ("Indefinite U.S. work authorized individuals only"), so it is read too.
     parts = [
         _strip_html((sections.get(key) or {}).get('text', ''))
-        for key in ('jobDescription', 'qualifications', 'companyDescription')
+        for key in ('jobDescription', 'qualifications', 'additionalInformation',
+                    'companyDescription')
     ]
     return ' '.join(part for part in parts if part)
 
 
 def _detail_workday(job):
-    """Full posting text for one Workday job, from the cxs JSON endpoint."""
+    """
+    Full posting text for one Workday job, from the cxs JSON endpoint.
+
+    The list endpoint gives only a city or "2 Locations". The same detail
+    response names the country, so it is added to a city here, at no extra
+    request. Not to "2 Locations": the detail names only the primary site's
+    country, and a job at a German and a US site would read as US only.
+    """
     data = _get_detail_json(_workday_cxs_url(job['link']))
     info = data.get('jobPostingInfo') or {}
+    country = (info.get('country') or {}).get('descriptor') or ''
+    multi_site = re.fullmatch(r'\d+\s+locations?', (job.get('location') or '').strip(), re.I)
+    if country and not multi_site:
+        job['location'] = with_countries(job.get('location') or '', [country])
     return _strip_html(info.get('jobDescription', ''))
 
 
@@ -411,21 +489,31 @@ DETAIL_FETCHERS = {
 }
 
 
-def enrich_descriptions(jobs, should_fetch, max_fetches=60):
+def enrich_descriptions(jobs, should_fetch, max_fetches=60, max_snippet_fetches=None):
     """
-    Fetch full descriptions for jobs whose source returned titles only.
+    Fetch full descriptions for jobs whose source returned titles only, or
+    only a teaser.
+
+    Two budgets, each a count and a time limit. The teaser-only sources
+    (SNIPPET_ONLY_SOURCES) are fetched first, under SNIPPET_MAX_FETCHES and
+    SNIPPET_BUDGET_SECS. The title-only company boards follow, under
+    max_fetches and DETAIL_BUDGET_SECS. Neither can spend the other's.
 
     Args:
         jobs: list of job dicts
         should_fetch: callable(job) -> bool, the screen deciding which jobs
             are worth a request. Keeping this out of the connector means the
             scoring logic owns the decision, not the fetcher.
-        max_fetches: hard ceiling on requests per run. Reported when hit,
-            never silently applied.
+        max_fetches: hard ceiling on requests to the title-only sources per
+            run. Reported when hit, never silently applied.
+        max_snippet_fetches: the same for the teaser-only sources. None means
+            SNIPPET_MAX_FETCHES, read now.
 
     Returns:
-        (enriched_count, skipped_over_budget)
+        (enriched_count, skipped_over_budget), both summed over the two budgets
     """
+    if max_snippet_fetches is None:
+        max_snippet_fetches = SNIPPET_MAX_FETCHES
     candidates = [
         job for job in jobs
         if job.get('source') in NEEDS_DETAIL_FETCH
@@ -434,25 +522,47 @@ def enrich_descriptions(jobs, should_fetch, max_fetches=60):
         and job.get('link')
         and should_fetch(job)
     ]
+    snippets = [job for job in candidates if job['source'] in SNIPPET_ONLY_SOURCES]
+    title_only = [job for job in candidates if job['source'] not in SNIPPET_ONLY_SOURCES]
 
+    enriched, over_budget = 0, 0
+    for group, limit, seconds, label in (
+            (snippets, max_snippet_fetches, SNIPPET_BUDGET_SECS, 'teaser-only'),
+            (title_only, max_fetches, DETAIL_BUDGET_SECS, 'title-only')):
+        done, skipped = _fetch_details(group, limit, seconds, label)
+        enriched += done
+        over_budget += skipped
+
+    logger.info(
+        f"[ATS] Fetched descriptions for {enriched} of {len(candidates)} screened jobs"
+    )
+    return enriched, over_budget
+
+
+def _fetch_details(candidates, max_fetches, budget_secs, label):
+    """
+    Fetch descriptions for one group of candidates, under its own count and
+    its own wall-clock limit. Returns (enriched_count, skipped_over_budget).
+    """
     over_budget = max(0, len(candidates) - max_fetches)
     if over_budget:
         logger.warning(
-            f"[ATS] {len(candidates)} jobs passed the title screen but the budget is "
-            f"{max_fetches}. Skipping {over_budget}, they keep title-only scoring."
+            f"[ATS] {len(candidates)} {label} jobs passed the title screen but the "
+            f"budget is {max_fetches}. Skipping {over_budget}, they keep the text "
+            f"their source gave."
         )
 
     enriched = 0
     # A cumulative wall-clock ceiling so a run of slow detail pages cannot drag
     # the whole daily run out. This is the same lesson as the Apify stall: cap
     # the time, not just the count.
-    deadline = time.monotonic() + DETAIL_BUDGET_SECS
+    deadline = time.monotonic() + budget_secs
     budget = candidates[:max_fetches]
     for i, job in enumerate(budget):
         if time.monotonic() > deadline:
             logger.warning(
-                f"[ATS] enrichment hit its {DETAIL_BUDGET_SECS}s budget after {i} fetches; "
-                f"{len(budget) - i} jobs keep title-only scoring."
+                f"[ATS] {label} enrichment hit its {budget_secs}s budget after {i} "
+                f"fetches; {len(budget) - i} jobs keep the text their source gave."
             )
             break
         try:
@@ -464,11 +574,157 @@ def enrich_descriptions(jobs, should_fetch, max_fetches=60):
         if description:
             job['description'] = description
             enriched += 1
-
-    logger.info(
-        f"[ATS] Fetched descriptions for {enriched} of {len(candidates)} screened jobs"
-    )
     return enriched, over_budget
+
+
+# ── Is a stored posting still open? ──────────────────────────────────────────
+# The digest sends jobs stored up to a week ago, so a posting can close between
+# the day its board was read and the day it is sent. Each vendor's own API
+# says whether one posting is still listed, which is more reliable than the
+# public page: a closed Greenhouse job redirects to the board with HTTP 200,
+# and an Ashby page answers 200 even for an id that never existed.
+#
+# posting_is_open answers False only on proof that the posting is closed,
+# None when it cannot tell (the caller then falls back to the page check), and
+# True otherwise. A timeout, a rate limit or a server error is not proof, so
+# it counts as open: sending one closed job costs less than losing an open one.
+# Requests go through detail_session, no retries and a short timeout, and only
+# to the vendors' fixed API hosts or a Workday tenant host.
+_ASHBY_BOARDS = {}           # slug -> set of open posting ids, None if unreadable
+_GREENHOUSE_SLUGS = None     # company name, lower case -> board slug
+_UNKNOWN = object()          # cache marker for "the board answered nothing usable"
+
+_GREENHOUSE_HOSTS = ('boards.greenhouse.io', 'job-boards.greenhouse.io')
+_CLOSED_STATUSES = (404, 410)
+
+
+def reset_liveness_caches():
+    """Forget the boards and the company list read so far. Called once per run."""
+    global _GREENHOUSE_SLUGS
+    _ASHBY_BOARDS.clear()
+    _GREENHOUSE_SLUGS = None
+
+
+def _greenhouse_slug_for(company):
+    """The board slug configured for a Greenhouse company, by name."""
+    global _GREENHOUSE_SLUGS
+    if _GREENHOUSE_SLUGS is None:
+        _GREENHOUSE_SLUGS = {
+            (c.get('name') or c['slug']).strip().lower(): c['slug']
+            for c in ATSJobSearcher().load_companies() if c.get('ats') == 'greenhouse'
+        }
+    return _GREENHOUSE_SLUGS.get((company or '').strip().lower())
+
+
+def _status_check(url):
+    """GET url and read the status: False on 404 or 410, True otherwise."""
+    response = detail_session.get(
+        url, headers={**HEADERS, 'Accept': 'application/json'}, timeout=DETAIL_TIMEOUT)
+    return response.status_code not in _CLOSED_STATUSES
+
+
+def _greenhouse_open(parts, company):
+    # gh_jid is always Greenhouse's own id. A number in the path of a custom
+    # careers domain is read only when there is no gh_jid.
+    job_id = (parse_qs(parts.query).get('gh_jid') or [''])[0]
+    if not job_id:
+        match = re.search(r'/jobs/(\d+)', parts.path)
+        job_id = match.group(1) if match else ''
+    slug = None
+    if parts.netloc in _GREENHOUSE_HOSTS:
+        slug = parts.path.strip('/').split('/')[0] or None
+    slug = slug or _greenhouse_slug_for(company)
+    if not (slug and job_id.isdigit()):
+        return None
+    return _status_check(f'https://boards-api.greenhouse.io/v1/boards/{slug}/jobs/{job_id}')
+
+
+def _ashby_open(parts):
+    path = parts.path.strip('/').split('/')
+    if parts.netloc != 'jobs.ashbyhq.com' or len(path) < 2:
+        return None
+    slug, job_id = path[0], path[1]
+    if slug not in _ASHBY_BOARDS:
+        # One board read per run answers every Ashby job at that company.
+        _ASHBY_BOARDS[slug] = None
+        try:
+            response = detail_session.get(
+                ASHBY_URL.format(slug=slug), headers=HEADERS, timeout=DETAIL_TIMEOUT)
+            jobs = response.json().get('jobs') if response.status_code == 200 else None
+            if isinstance(jobs, list):
+                # An empty list may be a glitch, and acting on it would drop
+                # every job at the company, so it proves nothing.
+                ids = set()
+                for item in jobs:
+                    ids.add(str(item.get('id') or ''))
+                    ids.add(urlparse(item.get('jobUrl') or '').path.rstrip('/').rsplit('/', 1)[-1])
+                ids.discard('')
+                _ASHBY_BOARDS[slug] = ids or _UNKNOWN
+        except Exception as e:
+            logger.debug(f"[ATS] Ashby board {slug} unreadable: {type(e).__name__}")
+    ids = _ASHBY_BOARDS[slug]
+    if ids is None:
+        return True
+    if ids is _UNKNOWN:
+        return None
+    return job_id in ids
+
+
+def _lever_open(parts):
+    path = parts.path.strip('/').split('/')
+    if parts.netloc != 'jobs.lever.co' or len(path) < 2:
+        return None
+    return _status_check(f'https://api.lever.co/v0/postings/{path[0]}/{path[1]}')
+
+
+def _smartrecruiters_open(parts):
+    path = parts.path.strip('/').split('/')
+    if parts.netloc != 'jobs.smartrecruiters.com' or len(path) < 2:
+        return None
+    response = detail_session.get(
+        f'https://api.smartrecruiters.com/v1/companies/{path[0]}/postings/{path[1]}',
+        headers={**HEADERS, 'Accept': 'application/json'}, timeout=DETAIL_TIMEOUT)
+    if response.status_code in _CLOSED_STATUSES:
+        return False
+    # The API answers 400 for an id it does not recognise, which is not the
+    # same as a posting that closed.
+    if response.status_code == 400:
+        return None
+    if response.status_code == 200:
+        return response.json().get('active') is not False
+    return True
+
+
+def _workday_open(link, parts):
+    if not parts.netloc.endswith('.myworkdayjobs.com'):
+        return None
+    return _status_check(_workday_cxs_url(link))
+
+
+def posting_is_open(link, source, company=''):
+    """
+    Whether a company-board posting is still listed by its vendor.
+
+    Returns False only on proof it is closed, None when the vendor or the
+    link gives no way to tell, and True otherwise (any error included).
+    """
+    parts = urlparse(link or '')
+    try:
+        if source == 'Greenhouse':
+            return _greenhouse_open(parts, company)
+        if source == 'Ashby':
+            return _ashby_open(parts)
+        if source == 'Lever':
+            return _lever_open(parts)
+        if source == 'SmartRecruiters':
+            return _smartrecruiters_open(parts)
+        if source == 'Workday':
+            return _workday_open(link, parts)
+        # SuccessFactors has no per-posting endpoint without a login.
+        return None
+    except Exception as e:
+        logger.debug(f"[ATS] liveness check failed for {link}: {type(e).__name__}")
+        return True
 
 
 class ATSJobSearcher:

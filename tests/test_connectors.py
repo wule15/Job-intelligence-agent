@@ -167,7 +167,9 @@ class TestSuccessFactors:
         job = self._parse()[0]
         assert '<' not in job['description'] and '&lt;' not in job['description']
         assert 'valve sizing' in job['description'], 'CDATA HTML should unescape then strip'
-        assert job['location'] == 'Berlin, DE'
+        # The feed gives an ISO country code; it is spelled out so the country
+        # allow-list and the EU ranking can read it.
+        assert job['location'] == 'Berlin, Germany'
 
     def test_links_are_canonicalised(self):
         assert 'utm_' not in self._parse()[0]['link']

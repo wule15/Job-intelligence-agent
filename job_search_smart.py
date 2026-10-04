@@ -15,7 +15,9 @@ from sources.duckduckgo import DDGJobSearcher
 from sources.apify import ApifyJobSearcher
 from sources.linkedin import LinkedInJobSearcher
 from sources.ats import ATSJobSearcher, enrich_descriptions
-from core.job_filter import JobFilter, title_prescreen
+from core.job_filter import (
+    JobFilter, is_outside_allowed_countries, title_drop_reason, title_prescreen,
+)
 from core.job_validator import JobValidator
 from core.job_normalize import canonical_url, dedup_key, find_near_duplicates
 from core.database import Database
@@ -27,6 +29,56 @@ logger = setup_logging('job_search_smart')
 # Minimum relevance score a job needs to reach the digest. At the capped
 # denominator of 15 this is roughly two skill matches.
 MIN_RELEVANCE_SCORE = 10
+
+# Early-career searches, used only when EARLY_CAREER_QUERIES is on. Grouped by
+# the CV track that has to be present for the group to run. Plain form only,
+# never "remote ...", because graduate and trainee roles are rarely remote.
+# Every query is at least three words, so none falls into the broad tier that
+# the throttled DuckDuckGo source reads. At most 15 in total.
+EARLY_CAREER_TERMS = {
+    'mechanical': ('graduate mechanical engineer', 'junior mechanical engineer',
+                   'mechanical engineer trainee', 'mechanical engineering intern',
+                   'associate mechanical engineer'),
+    'process': ('graduate process engineer', 'junior process engineer'),
+    'thermal': ('junior thermal engineer', 'graduate thermal engineer',
+                'junior CFD engineer', 'graduate CFD engineer'),
+    'sales': ('junior sales engineer', 'graduate sales engineer',
+              'trainee sales engineer', 'associate sales engineer'),
+}
+
+
+def split_query_tiers(queries):
+    """
+    Split the query list into (specific, broad), keeping its order.
+
+    Specific queries have three or more words and go to the paid and capped
+    sources; broad ones are shorter and go to the free sources that filter on
+    their side. The order is kept, not re-sorted: build_search_queries
+    already returns the list longest first, with the day's early-career
+    query moved to the front, and a re-sort here would push that query back
+    out of the few head slots the capped sources read.
+    """
+    specific = [q for q in queries if len(q.split()) >= 3]
+    broad = [q for q in queries if len(q.split()) < 3]
+    return specific, broad
+
+
+def worth_fetching(job, cv_skills):
+    """
+    Whether a title-only job is worth a request for its full description.
+
+    The title must pass the cheap screen, and the job must not be located
+    only in countries the user cannot work in: a large board lists postings
+    from dozens of countries, and each one fetched spends the fixed fetch
+    budget. A job in a sponsorship-only country is still fetched, because
+    its sponsorship offer, if any, is in the text. A title the filter will
+    drop on its own (senior, local trade, pure programming) is not fetched
+    either.
+    """
+    return (title_prescreen(job.get('title', ''), cv_skills)
+            and not title_drop_reason(job.get('title', ''), job.get('source', ''))
+            and not is_outside_allowed_countries(job, text_ready=False))
+
 
 class SmartJobSearcher:
     """Intelligent job search based on user skills."""
@@ -114,8 +166,17 @@ class SmartJobSearcher:
         logger.info(f"Key domains from CV: {key_domains}")
         return categories, key_domains
 
-    def build_search_queries(self):
-        """Build search queries directly from extracted CV skills."""
+    def build_search_queries(self, day=None):
+        """
+        Build search queries directly from extracted CV skills.
+
+        Returns the queries longest first, ties in alphabetical order, so the
+        same CV gives the same list on every run. With EARLY_CAREER_QUERIES
+        on, one early-career query is moved to the front, a different one
+        each day (day of the year by default, the same rotation SerpAPI
+        uses). The capped sources read only the first two to five queries,
+        so without the move these shorter queries would never reach them.
+        """
         top_skills = self.extract_top_skills(200)  # pull all skills, no arbitrary cap
         _, key_domains = self.get_job_categories()
 
@@ -310,8 +371,39 @@ class SmartJobSearcher:
                 if len(plain.split()) >= 2:   # skip one-word stubs, too broad to be useful
                     queries.add(plain)
 
-        # 4. Sort by specificity (longer = more specific) so Apify gets best 3
-        queries = sorted(queries, key=lambda q: len(q), reverse=True)
+        # 4. Early-career queries, for graduate, junior, trainee, associate and
+        #    intern roles. Off unless EARLY_CAREER_QUERIES is set. Each group
+        #    runs only when the CV backs it; key_domains is often empty, so the
+        #    skill checks carry the gate.
+        early = set()
+        if Config.EARLY_CAREER_QUERIES:
+            if has_cfd or has_valve or has_domain:
+                early.update(EARLY_CAREER_TERMS['mechanical'])
+            if has_valve or has_domain:
+                early.update(EARLY_CAREER_TERMS['process'])
+            if has_cfd or has_domain:
+                early.update(EARLY_CAREER_TERMS['thermal'])
+            if has_sales and (has_valve or has_domain):
+                early.update(EARLY_CAREER_TERMS['sales'])
+        queries.update(early)
+
+        # 5. Sort by specificity (longer = more specific) so the capped sources
+        #    get the most specific queries. Ties go alphabetical: sorting on
+        #    length alone left their order to Python's per-run string hashing,
+        #    so which query led the list changed from run to run.
+        queries = sorted(queries, key=lambda q: (-len(q), q))
+
+        # 6. Move today's early-career query to the front. Every capped source
+        #    gives up its last head slot to it, and over about two weeks each
+        #    early-career query gets its turn.
+        if early:
+            if day is None:
+                day = date.today().timetuple().tm_yday
+            rotation = sorted(early)
+            head = rotation[day % len(rotation)]
+            queries.remove(head)
+            queries.insert(0, head)
+            logger.info(f"Early-career queries: {len(rotation)}, today's lead: {head}")
 
         logger.info(f"Built {len(queries)} search queries:")
         for q in queries:
@@ -340,13 +432,10 @@ class SmartJobSearcher:
         # Split queries by specificity tier so each source gets the queries it's best at.
         # Specific (multi-word, skill-named) → paid/premium sources with full descriptions.
         # Broad (short, role-based) → free sources that filter client-side anyway.
-        # Sorted longest-first, which the comment above always claimed but the
-        # code never actually did. It matters now that JSearch is capped: the cap
-        # keeps the most specific queries and drops the broad tail.
-        specific_queries = sorted(
-            (q for q in queries if len(q.split()) >= 3), key=len, reverse=True
-        )
-        broad_queries    = [q for q in queries if len(q.split()) < 3]    # e.g. "remote engineer"
+        # The order from build_search_queries is kept (longest first, today's
+        # early-career query at the front). It matters because JSearch is
+        # capped: the cap keeps the head of the list and drops the broad tail.
+        specific_queries, broad_queries = split_query_tiers(queries)
 
         # Ensure at least some queries in each tier
         if not specific_queries:
@@ -494,7 +583,7 @@ class SmartJobSearcher:
         cv_skills = self.filter.all_skills
         enriched, over_budget = enrich_descriptions(
             valid_jobs,
-            should_fetch=lambda job: title_prescreen(job.get('title', ''), cv_skills),
+            should_fetch=lambda job: worth_fetching(job, cv_skills),
         )
         if enriched or over_budget:
             print(f"[*] Fetched {enriched} missing job descriptions"
@@ -587,7 +676,7 @@ class SmartJobSearcher:
             if job.get('location'):
                 print(f"   Location: {job['location']}")
             if job.get('link'):
-                print(f"   Link: {job['link'][:70]}...")
+                print(f"   Link: {job['link']}")
 
 
 def main():

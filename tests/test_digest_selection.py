@@ -20,18 +20,30 @@ from core.database import Database  # noqa: E402
 @pytest.fixture
 def db(tmp_path, monkeypatch):
     path = str(tmp_path / 'digest.db')
+    # Patch the path before anything reads it, so the tracking tables are
+    # created on the temporary database and never on the configured one.
+    monkeypatch.setattr(telegram_sender.Config, 'DATABASE_PATH', path)
     database = Database(db_path=path)
     database.init_database()
     telegram_sender.init_telegram_tracking()
-    monkeypatch.setattr(telegram_sender.Config, 'DATABASE_PATH', path)
-    # init_telegram_tracking ran against the real path before the patch, so
-    # create the tracking table on the temp database explicitly.
-    database.connection.execute(
-        'CREATE TABLE IF NOT EXISTS telegram_sent_jobs ('
-        'job_id INTEGER PRIMARY KEY, sent_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP)')
-    database.connection.commit()
     yield database
     database.close()
+
+
+@pytest.fixture
+def real_path_sentinel(tmp_path, monkeypatch):
+    """Stands in for the real database path, set before the db fixture runs."""
+    sentinel = tmp_path / 'stand-in-for-the-real.db'
+    monkeypatch.setattr(telegram_sender.Config, 'DATABASE_PATH', str(sentinel))
+    return sentinel
+
+
+class TestFixtureHygiene:
+    def test_fixture_never_opens_the_configured_database(self, real_path_sentinel, db):
+        """The README says no test touches a real database. Opening the
+        configured path, even to create an empty table, would break that the
+        moment pytest ran inside a live deployment."""
+        assert not real_path_sentinel.exists()
 
 
 def add(db, title, company, score, source):
@@ -189,26 +201,28 @@ class TestSourceDemotion:
 
 
 class TestLiveness:
-    """The expired-link check on aggregator jobs in the main digest."""
+    """The expired-link check in the main digest. tests/test_liveness.py
+    covers the check itself and the other two digests."""
 
     def test_expired_aggregator_job_is_dropped(self, db):
         add(db, 'Live Role', 'GoodCo', 70.0, 'Jobicy')
         add(db, 'Dead Role', 'DeadCo', 90.0, 'Jobicy')
         dead = {'https://example.com/Dead Role/DeadCo'}
-        jobs = telegram_sender.get_unsent_jobs(limit=10, is_live=lambda url: url not in dead)
+        jobs = telegram_sender.get_unsent_jobs(limit=10, is_live=lambda url, source, company: url not in dead)
         titles = [j[1] for j in jobs]
         assert 'Live Role' in titles and 'Dead Role' not in titles
 
-    def test_ats_jobs_bypass_the_liveness_check(self, db):
+    def test_ats_jobs_are_checked_too(self, db):
+        """A company board lists only open roles when it is read, not when a
+        stored job is sent days later, so board jobs no longer skip the check."""
         add(db, 'Board Role', 'Flowserve', 70.0, 'Workday')
-        # is_live rejects everything; an ATS job must still come through.
-        jobs = telegram_sender.get_unsent_jobs(limit=10, is_live=lambda url: False)
-        assert any(j[1] == 'Board Role' for j in jobs)
+        jobs = telegram_sender.get_unsent_jobs(limit=10, is_live=lambda *args: False)
+        assert not any(j[1] == 'Board Role' for j in jobs)
 
     def test_no_check_means_no_network(self, db):
         # Default is_live=None must never call out. A callable that explodes if
         # invoked proves the default path does not touch it.
-        def boom(url):
+        def boom(*args):
             raise AssertionError('liveness check ran when it should not have')
         add(db, 'Role', 'Co', 70.0, 'Jobicy')
         telegram_sender.get_unsent_jobs(limit=10)  # no is_live -> boom never wired

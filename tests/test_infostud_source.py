@@ -8,6 +8,8 @@ offline against the shape of Infostud's Next.js __NEXT_DATA__ payload.
 import sys
 from pathlib import Path
 
+import pytest
+
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from sources.free_boards import (  # noqa: E402
@@ -170,3 +172,66 @@ class TestInfostudFullDescription:
                'description': 'Already has a description.'}
         ats.enrich_descriptions([job], should_fetch=lambda j: True)
         assert calls == []
+
+
+class TestLocalBoardHasItsOwnFetchBudget:
+    """Live runs had 121 to 148 jobs waiting for a description, against a
+    budget of 60 fetches. The local board's jobs came last, so they kept their
+    teaser text and failed the score, and the regional digest fell from 15
+    jobs to 2. The teaser-only board now has its own budget, fetched first."""
+
+    @staticmethod
+    def _jobs(source, count, description=''):
+        return [{'source': source, 'title': f'{source} job {i}',
+                 'link': f'https://example.com/{source}/{i}', 'description': description}
+                for i in range(count)]
+
+    @pytest.fixture
+    def fetched(self, monkeypatch):
+        from sources import ats
+        calls = []
+        for source in ('Infostud', 'Workday'):
+            monkeypatch.setitem(ats.DETAIL_FETCHERS, source,
+                                lambda job, s=source: calls.append(s) or 'Full advert.')
+        return calls
+
+    def test_local_adverts_are_fetched_when_the_shared_budget_is_spent(self, fetched):
+        from sources import ats
+        jobs = self._jobs('Workday', 70) + self._jobs('Infostud', 5, 'Short teaser.')
+        enriched, over_budget = ats.enrich_descriptions(jobs, should_fetch=lambda j: True)
+        assert fetched.count('Infostud') == 5
+        assert fetched.count('Workday') == 60
+        assert (enriched, over_budget) == (65, 10)
+        assert all(job['description'] == 'Full advert.' for job in jobs[-5:])
+
+    def test_the_local_budget_has_its_own_cap(self, fetched, monkeypatch):
+        from sources import ats
+        monkeypatch.setattr(ats, 'SNIPPET_MAX_FETCHES', 3)
+        jobs = self._jobs('Infostud', 5, 'Short teaser.') + self._jobs('Workday', 2)
+        enriched, over_budget = ats.enrich_descriptions(jobs, should_fetch=lambda j: True)
+        assert fetched.count('Infostud') == 3
+        assert fetched.count('Workday') == 2
+        assert (enriched, over_budget) == (5, 2)
+
+    def test_each_budget_stops_on_its_own_clock(self, fetched, monkeypatch):
+        """Each fetch takes 20 seconds on this clock. The local pass stops at
+        its own time limit, and the other boards still get theirs, so the whole
+        pass ends within the two limits added together."""
+        from sources import ats
+        clock = {'now': 0.0}
+        monkeypatch.setattr(ats.time, 'monotonic', lambda: clock['now'])
+
+        def slow(job, s):
+            clock['now'] += 20
+            fetched.append(s)
+            return 'Full advert.'
+        for source in ('Infostud', 'Workday'):
+            monkeypatch.setitem(ats.DETAIL_FETCHERS, source,
+                                lambda job, s=source: slow(job, s))
+        monkeypatch.setattr(ats, 'SNIPPET_BUDGET_SECS', 60)
+        monkeypatch.setattr(ats, 'DETAIL_BUDGET_SECS', 90)
+        jobs = self._jobs('Infostud', 10, 'Short teaser.') + self._jobs('Workday', 10)
+        ats.enrich_descriptions(jobs, should_fetch=lambda j: True)
+        assert fetched.count('Infostud') == 4   # at 0, 20, 40 and 60 seconds
+        assert fetched.count('Workday') == 5    # at 80 to 160 seconds
+        assert clock['now'] <= 60 + 90 + 2 * 20

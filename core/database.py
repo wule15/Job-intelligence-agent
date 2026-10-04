@@ -401,7 +401,10 @@ class Database:
 
     def cleanup_old_entries(self, days=30):
         """Remove old entries from database (older than X days)."""
-        cutoff_date = datetime.now() - timedelta(days=days)
+        # Passed as text in the exact form sqlite3's built-in datetime adapter
+        # produced, so the comparison is unchanged. That adapter is deprecated
+        # since Python 3.12, and once it is removed a datetime here would raise.
+        cutoff_date = (datetime.now() - timedelta(days=days)).isoformat(' ')
         cursor = self.connection.cursor()
 
         # Remove old processed emails
@@ -413,7 +416,11 @@ class Database:
             (cutoff_date,)
         )
 
-        # Purge telegram_sent_jobs entries whose job was deleted (prevents ghost re-sends)
+        # Purge telegram_sent_jobs entries whose job was deleted. jobs.id has no
+        # AUTOINCREMENT, so SQLite can hand a deleted job's id to a new job, and a
+        # leftover row would then hide that new job from every digest. This purge
+        # is NOT what stops a resend: telegram_sender keeps sent_history for
+        # that, keyed on title, company and link, and this cleanup never touches it.
         try:
             cursor.execute(
                 'DELETE FROM telegram_sent_jobs WHERE job_id NOT IN (SELECT id FROM jobs)'

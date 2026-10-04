@@ -63,8 +63,10 @@ ENRICH
   how much text the source returned, not how well the job fits. A cheap
   title screen decides which are worth a second request, then the full
   description is fetched for those only. Boards that return only a short
-  teaser are fetched too. The screen also accepts local-language role
-  words listed in .env, matched without diacritics.
+  teaser are fetched too, first and under their own budget, so a busy day
+  on the company boards cannot leave them unread. Each budget is a count
+  and a time limit. The screen also accepts local-language role words
+  listed in .env, matched without diacritics.
       |
       v
 SCORE
@@ -76,8 +78,24 @@ SCORE
       |
       v
 FILTER
-  Dealbreaker keywords, geography restrictions, non-English titles,
-  minimum score. Every rejection is counted by reason and reported.
+  Titles first: senior titles (Senior, Lead, Principal, Head of, Director
+  and similar, but not Manager), software-development titles except
+  entry-level software and QA roles from the local board, technician,
+  electrician and local civil-engineering titles (optional), and job
+  functions on an optional private list (payroll, HR, marketing). Then dealbreaker
+  keywords, work eligibility (visa sponsorship, citizenship and
+  work-authorization lines), an optional country allow-list, non-English
+  titles, an optional required-language check, an optional check on the
+  language the advert is written in, minimum score. The
+  allow-list reads the location field; a location that names no country
+  is left to the text rules, and a remote job whose advert says it is open
+  worldwide is kept. The language check drops an advert
+  that requires a configured language fluent or at C1, and keeps B1, B2
+  and "a plus"; it is a pattern match on each sentence and can misread
+  one. The advert-language check reads the advert's common words and
+  drops one clearly written in a language you list; a teaser, a mixed
+  advert or one in Cyrillic is never judged. Every rejection is counted by
+  reason and reported.
   Scam defence: known fake boards and free-hosting apply links are dropped
   outright; softer scam signals (apply-by-WhatsApp, pay-to-work fees) heavily
   downrank the listing and flag it so the digest warns before you apply.
@@ -85,7 +103,9 @@ FILTER
       v
 STORE
   SQLite. Unique on the normalised key, so a repeat increments a counter
-  instead of creating a row.
+  instead of creating a row. Stored rows are kept for a week. A separate
+  send history, which the cleanup never touches, records every job that
+  reached the chat.
       |
       v
 DELIVER
@@ -94,8 +114,17 @@ DELIVER
   a separate "Direct company openings" shortlist drawn only from the employer
   boards, and a regional message for jobs in the user's own region. Indeed and
   JSearch are demoted to a last-resort fill so they cannot crowd out the better
-  sources. Expired links are dropped before sending. A source that failed this
-  run, or returned nothing for three runs, is named at the end of the digest.
+  sources. Before a job is sent, unless it was saved by hand, its posting is
+  checked: company-board jobs against the vendor's API (Greenhouse, Lever,
+  Ashby, SmartRecruiters, Workday), everything else by loading the page. A
+  job the vendor reports closed is dropped and its row deleted; a page that
+  only reads as closed is skipped that day and checked again the next. A
+  timeout or error lets it through, and after 60 checks or 90 seconds the
+  rest go out unchecked. A job whose link was ever sent, or whose title and
+  company were sent in the last 45 days in the same country, is not sent
+  again, and an optional private file (DIGEST_EXCLUDE_FILE) lists jobs
+  handled outside the digest. A source that failed this run, or returned
+  nothing for three runs, is named at the end of the digest.
       |
       v
 TRACK
@@ -122,9 +151,9 @@ Only what is in the code.
 
 **Retries transient failures.** 408, 429, 500, 502, 503, 504 and connection errors, with exponential backoff, and it obeys a `Retry-After` header when the server sends one. 401, 403 and 404 are deliberately not retried, because repeating a request the server already rejected wastes quota.
 
-**Reports its own health.** Each run prints a per-source table and writes it to the database. It warns when one source produces more than 90 percent of results, and names any source that has returned nothing for three consecutive runs, with how many days it has been quiet and its last error. A source that recovers is reported too, because several are free monthly tiers that reset on their own. The same failures are named at the end of the daily Telegram digest, or in a message of their own on a day with no new jobs, with every URL stripped from the error text because a request error can carry an API key.
+**Reports its own health.** Each run prints a per-source table and writes it to the database. It warns when one source produces more than 90 percent of results, and names any source that has returned nothing for three consecutive runs, with how many days it has been quiet and its last error. A source that recovers is reported too, because several are free monthly tiers that reset on their own. The same failures are named at the end of the daily Telegram digest, or in a short message on a day with no main digest, with every URL stripped from the error text because a request error can carry an API key.
 
-**Deduplicates on normalised values.** URLs lose their tracking parameters. Titles lose `(Remote)`, `(m/w/d)`, employment type and trailing locations. Companies lose `Inc`, `GmbH`, `B.V.`, `d.o.o.` and about thirty other legal suffixes. Seniority is deliberately preserved: Senior Sales Engineer and Sales Engineer stay two jobs, and there is a test enforcing it.
+**Deduplicates on normalised values.** URLs lose their tracking parameters. Titles lose `(Remote)`, `(m/w/d)`, employment type and trailing locations. Companies lose `Inc`, `GmbH`, `B.V.`, `d.o.o.` and about thirty other legal suffixes. Seniority words stay in the key, so Senior Sales Engineer and Sales Engineer would be two jobs, and there is a test enforcing it. That only matters for titles the filter keeps, since senior titles are now dropped before they are stored.
 
 **Scores per CV, not once.** For each CV it counts how many of that CV's skills appear in the job text, divided by a denominator capped at 25, because a job description will never mention all fifty. The best-scoring CV is stored with the job so the digest can say which one to send.
 
@@ -231,7 +260,7 @@ Python 3.11 or newer, no framework.
 | Tests | pytest |
 | Normalisation | standard library only, `re` and `urllib.parse` |
 
-407 tests, covering scoring, filtering, deduplication, storage, source health, digest composition, the scam screen, the SSRF guard on link checking, retry policy, local-language scoring and three regressions that each cost real results. Every test runs against fixtures and temporary files. No test touches a real database or makes a network call.
+871 tests, covering scoring, filtering, deduplication, storage, source health, digest composition, the scam screen, the SSRF guard on link checking, retry policy, local-language scoring and three regressions that each cost real results. Every test runs against fixtures and temporary files. No test touches a real database or makes a network call.
 
 One file, `tests/test_end_to_end.py`, runs a whole day through the real pipeline in order: search, dedup, description fetch, scoring, storage, digest selection and sending. Only the edges are replaced: fake job boards (one of which crashes), a temporary database, and Telegram's HTTP call captured instead of sent. It then checks what would have reached the chat: the strong match is there once, the weak match and the dealbreaker are not, the local-language advert lands in the regional message, the crashing source is named, nothing repeats the next day, and a failed send is retried. Each of those checks was confirmed to fail when the rule it guards is switched off.
 
@@ -308,7 +337,7 @@ fallback.
 
 ```bash
 python validate_system.py     # configuration and connectivity
-pytest                        # 407 tests, no network
+pytest                        # 816 tests, no network
 python job_search_smart.py    # one real run
 ```
 
@@ -419,7 +448,7 @@ container stays readable on the host.
 
 Up to ten in the main digest plus a separate direct-from-company shortlist and a regional message, capped at two per employer, each one carrying the score and which CV scored it.
 
-The percentages are a ranking device, not a probability. A score is the count of that CV's skill terms appearing in the job text over a denominator capped at 25, so 40 percent means roughly ten terms matched, not that the job is a 43 percent fit. It exists to order the list and to fill the quota, and the known weaknesses section below is honest about what it cannot see.
+The percentages are a ranking device, not a probability. A score starts as the count of that CV's skill terms appearing in the job text over a denominator capped at 25. A target role in the title and an industrial or B2B sector word in the advert each lift it part of the way to 100, and location, remote, experience and source multipliers then move it up or down. So before those multipliers, one matched term in an advert that names a target sector already scores about 33, each further term adds about 3, and 40 percent means roughly four terms matched, not that the job is a 40 percent fit. It exists to order the list and to fill the quota, and the known weaknesses section below is honest about what it cannot see.
 
 ---
 

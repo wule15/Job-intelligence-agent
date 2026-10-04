@@ -20,6 +20,7 @@ import requests
 import time
 from datetime import datetime
 from urllib.parse import quote
+from core.countries import expand_codes, iso_name, location_countries
 from core.utils import setup_logging
 
 logger = setup_logging('sources.free_boards')
@@ -394,6 +395,53 @@ def search_himalayas(query, limit=50):
 
 # ── Adzuna ────────────────────────────────────────────────────────────────────
 
+def _adzuna_location(item, country):
+    """
+    Adzuna's place name with the searched market's country added.
+
+    Each Adzuna search covers one country, but its display_name ("Pune",
+    "Hackney, London") rarely says which, so the country allow-list could not
+    tell a job in India from one in Germany. The market is known, so its name
+    is appended unless the place name already gives it.
+    """
+    place = (item.get('location') or {}).get('display_name') or 'Remote'
+    name = iso_name('GB' if country.lower() == 'uk' else country)
+    if not name or location_countries(name) <= location_countries(place):
+        return place
+    return f"{place}, {name}"
+
+
+# Every country Adzuna covers. "gb" is Adzuna's code for the United Kingdom.
+ADZUNA_MARKETS = ('gb', 'de', 'nl', 'at', 'pl', 'fr', 'it', 'es', 'be', 'ch',
+                  'us', 'ca', 'au', 'in', 'sg', 'nz', 'za', 'mx', 'br')
+# Calls per run. The free tier allows 250 a day; this is the old 19 markets x
+# 4 queries, kept as the ceiling.
+ADZUNA_CALL_BUDGET = 76
+
+
+def adzuna_plan(queries, allowed=(), sponsorship_only=()):
+    """
+    Which Adzuna markets to search, and how many queries each gets.
+
+    With a country allow-list set, a market outside it (and outside the
+    sponsorship-only countries) is skipped: the allow-list drops every job
+    from there, so each call is spent for nothing. The calls saved go to more
+    queries in the markets that remain, within ADZUNA_CALL_BUDGET. With no
+    allow-list every market is searched, four queries each, as before.
+    """
+    allowed_set = expand_codes(allowed)
+    sponsor_set = {c.strip().upper() for c in sponsorship_only or () if c.strip()}
+    if allowed_set:
+        wanted = allowed_set | sponsor_set
+        markets = [m for m in ADZUNA_MARKETS if ('GB' if m == 'gb' else m.upper()) in wanted]
+    else:
+        markets = list(ADZUNA_MARKETS)
+    if not markets:
+        return [], 0
+    per_market = min(len(queries), max(4, ADZUNA_CALL_BUDGET // len(markets)))
+    return markets, per_market
+
+
 def search_adzuna(query, country='gb', results_per_page=20):
     """
     Adzuna Jobs API, https://developer.adzuna.com/
@@ -438,7 +486,7 @@ def search_adzuna(query, country='gb', results_per_page=20):
             description=item.get('description', '')[:2000],
             link=item.get('redirect_url', ''),
             salary=salary_str,
-            location=item.get('location', {}).get('display_name', 'Remote'),
+            location=_adzuna_location(item, country),
             source='Adzuna',
         ))
 
@@ -825,15 +873,16 @@ class FreeJobSearcher:
             except Exception as e:
                 logger.warning(f"Himalayas skipped for '{q}': {e}")
 
-        # 9. Adzuna, GLOBAL. Every country Adzuna covers (Europe, US, Canada,
-        # Australia, India, Singapore, NZ, South Africa, Brazil, Mexico). The
-        # work-eligibility filter downstream keeps only roles the user can take
-        # (visa obtainable via sponsorship, or no permit needed), so a wide net is
-        # correct. Adzuna does NOT cover the UAE/Gulf; that needs a separate source.
-        # Free tier 250 req/day; 19 countries x 4 queries = 76, inside it.
-        for country in ('gb', 'de', 'nl', 'at', 'pl', 'fr', 'it', 'es', 'be', 'ch',
-                        'us', 'ca', 'au', 'in', 'sg', 'nz', 'za', 'mx', 'br'):
-            for q in queries[:4]:
+        # 9. Adzuna. Every country Adzuna covers (Europe, US, Canada,
+        # Australia, India, Singapore, NZ, South Africa, Brazil, Mexico), less
+        # the ones the country allow-list would drop anyway (see adzuna_plan).
+        # Adzuna does NOT cover the UAE/Gulf; that needs a separate source.
+        # Free tier 250 req/day; at most ADZUNA_CALL_BUDGET calls here.
+        from core.config import Config as _AdzunaCfg
+        markets, per_market = adzuna_plan(
+            queries, _AdzunaCfg.ALLOWED_COUNTRIES, _AdzunaCfg.SPONSORSHIP_ONLY_COUNTRIES)
+        for country in markets:
+            for q in queries[:per_market]:
                 try:
                     all_jobs.extend(search_adzuna(q, country=country))
                     time.sleep(0.3)
@@ -863,7 +912,7 @@ class FreeJobSearcher:
         # 10c. Regional coverage via Jooble, driven by the user's private config
         #      (REGIONAL_JOB_LOCATIONS in .env, empty by default so the public
         #      engine adds nothing here). Country names work best in Jooble
-        #      ("Serbia", not "Beograd"). This is what surfaces the home market,
+        #      ("Serbia", not a city). This is what surfaces the home market,
         #      e.g. the Balkans, that Adzuna does not cover. The work-eligibility
         #      filter keeps these (Serbia/Bosnia/Montenegro are no-permit).
         from core.config import Config as _RegionCfg

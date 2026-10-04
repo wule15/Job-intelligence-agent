@@ -14,6 +14,8 @@ the ones that will need tuning.
 import re
 from urllib.parse import urlsplit, urlunsplit, parse_qsl, urlencode
 
+from core.multilingual import fold_diacritics
+
 # Query parameters that identify the referrer, not the job. Two URLs that
 # differ only in these point at the same posting.
 TRACKING_PARAMS = {
@@ -162,6 +164,104 @@ def dedup_key(title, company):
     concerned, whatever URL or title decoration they arrived with.
     """
     return f"{normalize_title(title)}|{normalize_company(company)}"
+
+
+def history_key(title, company):
+    """
+    The key the send history compares on: dedup_key with accents folded.
+
+    "Inženjer prodaje" and "Inzenjer prodaje" are the same job typed two
+    ways. dedup_key itself stays unfolded on purpose: it is stored under a
+    unique index, and changing it would make the index migration merge or
+    delete existing rows. This key is only ever compared in Python.
+    """
+    return fold_diacritics(dedup_key(title, company))
+
+
+def parse_exclusions(text):
+    """
+    Read a hand-kept list of jobs never to send.
+
+    One "company | title" per line. Blank lines and lines starting with #
+    are skipped. Each line splits on its FIRST bar only, because titles can
+    contain one ("Lead Engineer | Python"). A line missing either side is
+    dropped.
+
+    Returns a list of (company, title) pairs.
+    """
+    pairs = []
+    for line in (text or '').splitlines():
+        line = line.strip()
+        if not line or line.startswith('#') or '|' not in line:
+            continue
+        company, title = (part.strip() for part in line.split('|', 1))
+        if company and title:
+            pairs.append((company, title))
+    return pairs
+
+
+def _folded_company(company):
+    return fold_diacritics(normalize_company(company))
+
+
+def _folded_title_tokens(title):
+    return set(fold_diacritics(normalize_title(title)).split())
+
+
+# Words that only introduce a reference number in an entry ("ref. 1234").
+_REFERENCE_WORDS = {'ref', 'reference', 'id', 'br', 'no'}
+
+
+def _entry_title_tokens(title):
+    """An entry's title words, without a reference number and its label."""
+    return {token for token in _folded_title_tokens(title)
+            if token not in _REFERENCE_WORDS and not any(ch.isdigit() for ch in token)}
+
+
+def matches_exclusion(title, company, exclusions):
+    """
+    True when a job matches an entry in the exclusion list.
+
+    The entries are typed by hand from an applications log, so they rarely
+    match the advert exactly, but a loose match hides future postings. The
+    match is:
+
+      - company: equal after normalising, or one starts with the other on a
+        word boundary ("Acme" matches "Acme Europe d.o.o.", not "Acmetronics")
+      - title: the same set of words, once the advert's trailing qualifier
+        ("- Senior", "(m/w/d)") and the entry's reference number ("ref.
+        1234") are removed. Or the advert holds every word of an entry of
+        three or more words, plus at most one more word.
+
+    The old rule also matched in the other direction, where the advert's
+    words were all inside the entry. Then an entry "Skilled mechanical
+    engineer" hid every future "Mechanical Engineer" at that company, and an
+    entry of two words such as "Quality Engineer" hid "Supplier Quality
+    Engineer". A generic entry still hides the same generic title, so keep
+    entries specific.
+    """
+    job_company = _folded_company(company)
+    job_tokens = _folded_title_tokens(title)
+    if not job_company or not job_tokens:
+        return False
+
+    for entry_company, entry_title in exclusions or ():
+        other = _folded_company(entry_company)
+        if not other:
+            continue
+        if not (job_company == other
+                or job_company.startswith(other + ' ')
+                or other.startswith(job_company + ' ')):
+            continue
+        entry_tokens = _entry_title_tokens(entry_title)
+        if not entry_tokens:
+            continue
+        if entry_tokens == job_tokens:
+            return True
+        if (len(entry_tokens) >= 3 and entry_tokens < job_tokens
+                and len(job_tokens - entry_tokens) <= 1):
+            return True
+    return False
 
 
 def title_similarity(a, b):

@@ -19,8 +19,11 @@ from core.job_normalize import (  # noqa: E402
     canonical_url,
     dedup_key,
     find_near_duplicates,
+    history_key,
+    matches_exclusion,
     normalize_company,
     normalize_title,
+    parse_exclusions,
     title_similarity,
 )
 
@@ -156,3 +159,96 @@ class TestNearDuplicates:
 
     def test_empty_list_is_safe(self):
         assert find_near_duplicates([]) == set()
+
+
+class TestHistoryKey:
+    """The key the never-resend record compares on."""
+
+    def test_ignores_diacritics(self):
+        assert history_key('Inženjer prodaje', 'Firma d.o.o.') == history_key('Inzenjer prodaje', 'Firma')
+
+    def test_keeps_seniority_apart(self):
+        assert history_key('Automation and Controls Engineer II', 'Orbitco')             != history_key('Senior Automation and Controls Engineer', 'Orbitco')
+
+    def test_dedup_key_itself_is_unchanged(self):
+        """The stored, uniquely indexed key must not fold accents. Changing it
+        would make the index migration merge or delete existing rows."""
+        assert dedup_key('Inženjer prodaje', 'Firma') == 'inženjer prodaje|firma'
+
+
+class TestParseExclusions:
+    def test_skips_blank_and_comment_lines(self):
+        text = '# company | title\n\nAcme | Sales Engineer\n   \n# Globex | Writer\n'
+        assert parse_exclusions(text) == [('Acme', 'Sales Engineer')]
+
+    def test_splits_on_the_first_bar_only(self):
+        text = 'Acme | Lead Product Engineer -> CTO | Python'
+        assert parse_exclusions(text) == [('Acme', 'Lead Product Engineer -> CTO | Python')]
+
+    def test_drops_lines_with_an_empty_side(self):
+        assert parse_exclusions('Acme |\n| Sales Engineer\nno bar at all\n') == []
+
+    def test_empty_text_is_safe(self):
+        assert parse_exclusions('') == []
+        assert parse_exclusions(None) == []
+
+
+class TestMatchesExclusion:
+    """The loose match for jobs handled outside the digest. Entries are typed
+    by hand from an applications log, so they rarely match the advert exactly."""
+
+    def test_trailing_qualifier_and_legal_suffix(self):
+        entries = [('Primer firma', 'Inzenjer podrske')]
+        assert matches_exclusion('Inženjer podrške - Junior', 'Primer firma d.o.o.', entries)
+
+    def test_entry_with_a_reference_number(self):
+        entries = [('Uzorak Search', 'Menadžer nabavke, ref. 1234')]
+        assert matches_exclusion('Menadžer nabavke', 'Uzorak Search Executive Search d.o.o.', entries)
+
+    def test_entry_company_with_a_country_word(self):
+        entries = [('Fabrika Primer', 'Inženjer kvaliteta')]
+        assert matches_exclusion('Inženjer kvaliteta', 'Fabrika Primer d.o.o.', entries)
+        assert matches_exclusion('Inženjer kvaliteta', 'Fabrika', entries)
+
+    def test_accents_in_the_company_are_ignored(self):
+        entries = [('Masinogradnja Primer', 'Inzenjer kvaliteta')]
+        assert matches_exclusion('Inženjer kvaliteta', 'Mašinogradnja Primer d.o.o.', entries)
+
+    def test_same_title_at_another_company_is_not_matched(self):
+        entries = [('Primer firma', 'Inzenjer podrske')]
+        assert not matches_exclusion('Inženjer podrške', 'Druga firma', entries)
+
+    def test_one_word_entry_does_not_swallow_longer_titles(self):
+        entries = [('Acme', 'Engineer')]
+        assert not matches_exclusion('Sales Engineer', 'Acme', entries)
+        assert matches_exclusion('Engineer', 'Acme', entries)
+
+    def test_a_generic_advert_is_not_hidden_by_a_longer_entry(self):
+        """The advert's words all inside the entry no longer match: that hid
+        every later generic posting at a watchlist company."""
+        assert not matches_exclusion('Mechanical Engineer', 'Nordco',
+                                     [('Nordco', 'Experienced mechanical engineer')])
+        assert not matches_exclusion('Automation Engineer', 'Globex',
+                                     [('Globex', 'Robotics and Automation Engineer (Lines)')])
+
+    def test_a_two_word_entry_matches_only_the_same_title(self):
+        entries = [('Globex Corporation', 'Quality Engineer')]
+        assert matches_exclusion('Quality Engineer', 'Globex', entries)
+        assert not matches_exclusion('Supplier Quality Engineer', 'Globex', entries)
+
+    def test_a_longer_entry_allows_one_extra_word(self):
+        entries = [('Acme', 'Pump Application Specialist')]
+        assert matches_exclusion('Pump Application Specialist Water', 'Acme', entries)
+        assert not matches_exclusion('Pump Application Specialist Team Lead', 'Acme', entries)
+
+    def test_different_level_is_not_matched(self):
+        entries = [('Orbitco', 'Automation and Controls Engineer II')]
+        assert not matches_exclusion('Senior Automation and Controls Engineer', 'Orbitco', entries)
+
+    def test_company_prefix_must_end_on_a_word(self):
+        entries = [('Acme', 'Sales Engineer')]
+        assert not matches_exclusion('Sales Engineer', 'Acmetronics', entries)
+
+    def test_empty_inputs_are_safe(self):
+        assert not matches_exclusion('Sales Engineer', 'Acme', [])
+        assert not matches_exclusion('', '', [('Acme', 'Sales Engineer')])
