@@ -124,3 +124,34 @@ class TestLinkTracking:
         db.mark_job_link_seen('https://example.com/1')
         db.mark_job_link_seen('https://example.com/1')
         assert db.is_job_link_seen('https://example.com/1') is True
+
+
+class TestFreshDatabase:
+    """
+    A fresh clone never calls init_database. The scheduled run only opens a
+    Database, so every table the run reads must exist after that alone.
+    The cleanup used to fail on a missing table and never delete anything,
+    and the cover letter script crashed on its first query.
+    """
+
+    @pytest.fixture
+    def fresh(self, tmp_path):
+        database = Database(db_path=str(tmp_path / 'fresh.db'))
+        yield database
+        database.close()
+
+    def test_cleanup_deletes_old_jobs(self, fresh):
+        fresh.add_job('Sales Engineer', 'Acme', 'desc', 'https://example.com/1')
+        fresh.connection.execute(
+            "UPDATE jobs SET extracted_date = datetime('now', '-8 days')")
+        fresh.connection.commit()
+
+        fresh.cleanup_old_entries(days=7)
+
+        cursor = fresh.connection.cursor()
+        cursor.execute('SELECT COUNT(*) FROM jobs')
+        assert cursor.fetchone()[0] == 0
+
+    def test_jobs_without_letters_can_be_listed(self, fresh):
+        fresh.add_job('Sales Engineer', 'Acme', 'desc', 'https://example.com/1')
+        assert len(fresh.get_jobs_without_cover_letters(limit=3)) == 1

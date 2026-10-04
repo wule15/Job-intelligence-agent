@@ -78,6 +78,34 @@ class Database:
             ''')
             cursor.execute('CREATE INDEX IF NOT EXISTS idx_job_links_seen ON job_links_seen(link)')
 
+            # The cleanup, the cover letter script and the digest's closed
+            # posting check all read these two. Only init_database created
+            # them, and no scheduled script calls it, so on a fresh clone the
+            # cleanup failed on its first table and deleted nothing.
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS processed_emails (
+                    id INTEGER PRIMARY KEY,
+                    message_id TEXT UNIQUE NOT NULL,
+                    processed_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    subject TEXT,
+                    email_from TEXT
+                )
+            ''')
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS cover_letters_sent (
+                    id INTEGER PRIMARY KEY,
+                    job_id INTEGER NOT NULL,
+                    job_title TEXT NOT NULL,
+                    company TEXT NOT NULL,
+                    selected_cv TEXT,
+                    generated_letter TEXT,
+                    email_sent_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    user_responded INTEGER DEFAULT 0,
+                    FOREIGN KEY(job_id) REFERENCES jobs(id),
+                    UNIQUE(job_id, selected_cv)
+                )
+            ''')
+
             # Add new columns to existing tables (ignore if already present)
             for col, definition in [
                 ('best_cv', 'TEXT'),
