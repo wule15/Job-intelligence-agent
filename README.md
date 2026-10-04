@@ -1,34 +1,42 @@
 # Job Intelligence Agent
 
-Reads company careers pages and job boards every morning, scores what it finds against my CV, and sends the handful worth reading to Telegram.
+Reads company careers pages and job boards, scores each job against every CV variant in `master-cv.yaml`, and sends the ones that clear a score bar to Telegram. Each run does one pass and exits, so the daily schedule comes from cron, Task Scheduler or a container.
 
 ---
 
 ## Quick start
 
-Five minutes to a first run. The full [Setup](#setup) section explains every
-option, this is the shortest path that works.
+The full [Setup](#setup) section explains every option. This is the shortest
+path that works.
 
 ```bash
 git clone https://github.com/wule15/Job-intelligence-agent.git
-cd job-intelligence-agent
+cd Job-intelligence-agent
 python -m venv .venv && source .venv/bin/activate   # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
 
-cp .env.example .env                                 # add a Gmail app password + Telegram bot token
-cp config/companies.example.json config/companies.json
-cp master-cv.example.yaml master-cv.yaml             # list your skills, one block per CV variant
+cp .env.example core/.env                            # add the Telegram bot token and chat id
+mkdir -p core/config
+cp config/companies.example.json core/config/companies.json
+cp master-cv.example.yaml core/master-cv.yaml        # list your skills, one block per CV variant
 
-python validate_system.py                            # check config and connectivity
-python job_search_smart.py                           # one real run, sends a Telegram digest
+python job_search_smart.py                           # one real run: search, score, store
+python telegram_sender.py                            # send the Telegram digest from what is stored
 python dashboard.py                                  # optional, browse results at localhost:5000
 ```
 
-The two files that decide how well it works are `config/companies.json` (the
-employers whose boards it reads) and `master-cv.yaml` (the skills it scores
-against). Everything else has a sensible default, and any missing job-board API
-key just disables that one source. Both files are gitignored and stay on your
-machine.
+Every path sits under `core/`, because `core/config.py` resolves everything
+relative to itself. A `.env` or `companies.json` at the repo root is never
+read, and a root `master-cv.yaml` only if `MASTER_CV_PATH` points at it.
+
+The two files that decide how well it works are `core/config/companies.json`
+(the employers whose boards it reads) and `core/master-cv.yaml` (the skills it
+scores against). The CV file is required: without it the run builds no search
+queries and every job scores 0. The company list is optional, but it feeds the
+best source. Every job-board key is optional: without it that source returns
+nothing and the run continues. Telegram needs both the bot token and the chat
+id, with no default; without them the search runs but no digest is sent. All
+three files are gitignored and stay on your machine.
 
 ---
 
@@ -37,107 +45,156 @@ machine.
 ```
 SOURCES
   Company careers pages   Greenhouse, Lever, Ashby, SmartRecruiters, Workday,
-                          SuccessFactors. Read directly from each employer's own
-                          board. No key, no quota, full job descriptions.
+                          SuccessFactors. Read directly from each employer's
+                          own board, no key. Four return full descriptions.
+                          SmartRecruiters and Workday return titles, and the
+                          enrich step fetches the text for titles worth reading.
   Aggregators             RemoteOK, Remotive, Arbeitnow, The Muse, Jobicy,
-                          WeWorkRemotely, Himalayas, Adzuna, Jooble
+                          WeWorkRemotely, Himalayas, Bundesagentur (German
+                          Federal Employment Agency), Adzuna, Jooble and Reed
+                          (the last three need a free key), plus an optional
+                          local board switched on with REGIONAL_BOARDS
   LinkedIn                Public guest endpoint, no authentication
-  JSearch                 RapidAPI, metered
-  Apify                   LinkedIn and Indeed with full text, metered
-  SerpAPI                 Google Jobs, needs a key
-  DuckDuckGo              Scrapes public job board pages
+  JSearch                 RapidAPI, metered, capped by JSEARCH_BUDGET
+                          (40 queries a run by default)
+  Apify                   LinkedIn with full text, plus Indeed listings
+                          without full text, metered
+  SerpAPI                 Google Jobs, needs a key, capped by SERPAPI_BUDGET
+  DuckDuckGo              Site-restricted web searches of Indeed, LinkedIn,
+                          Glassdoor and Wellfound. Reads the result titles
+                          and snippets, not the pages
   Gmail drafts            Jobs I saved by hand
       |
-      |  every source is timed, counted, and recorded, and one failure
-      |  cannot end the run
+      |  each source group is timed, counted and recorded, and an exception
+      |  in one cannot end the run
       v
 DEDUPLICATE
-  Canonical URL           30 tracking parameters stripped
+  Canonical URL           34 tracking parameters stripped, host lowercased,
+                          fragment and trailing slash dropped. A link stored
+                          on an earlier run is skipped
   Normalised key          "Sales Engineer (Remote, m/w/d)" at "Acme B.V."
                           and "Sales Engineer" at "Acme" are one job
   Near-duplicate pass     Jaccard similarity on title tokens, same company
+  Age                     A posting date older than 14 days drops the job.
+                          A job with no date is kept
       |
       v
 ENRICH
   Some boards return a title and no description. Scoring those measures
   how much text the source returned, not how well the job fits. A cheap
   title screen decides which are worth a second request, then the full
-  description is fetched for those only. Boards that return only a short
-  teaser are fetched too, first and under their own budget, so a busy day
-  on the company boards cannot leave them unread. Each budget is a count
-  and a time limit. The screen also accepts local-language role words
-  listed in .env, matched without diacritics.
+  description is fetched for those only. The screen skips titles the title
+  rules will drop and jobs located only in countries you cannot work in.
+  It also accepts local-language role words listed in TITLE_SCREEN_TERMS,
+  matched without diacritics. The local board returns only a short teaser,
+  so its adverts are fetched first, under their own budget of 100 fetches
+  and 60 seconds, and a busy day on the company boards cannot leave them
+  scored on a teaser. The company boards get 60 fetches and 90 seconds.
+      |
+      v
+FILTER
+  Hard rules, cheapest first. A job that breaks one is dropped before it
+  is scored. Hand-saved jobs skip every rule except the first.
+    Scam boards       known fake boards and free-hosting apply links
+    Titles            senior titles (Senior, Lead, Staff, Principal, Head
+                      of, Director, VP, Chief; Manager is kept), software
+                      titles, and two optional private lists: job functions
+                      (EXCLUDED_TITLE_TERMS, e.g. HR, payroll, marketing)
+                      and trade titles (DROP_LOCAL_TRADE_TITLES: technician,
+                      electrician, local civil engineering)
+    Dealbreakers      keywords such as "on-site only" or "must relocate",
+                      and security clearance or vetting
+    Export control    ITAR, EAR and "US person" roles
+    Eligibility       visa sponsorship, citizenship and work-authorization
+                      lines, read against WORK_ELIGIBLE_REGIONS and
+                      SPONSORSHIP_ONLY_COUNTRIES
+    Location          optional EXCLUDED_LOCATIONS, then an optional country
+                      allow-list (ALLOWED_COUNTRIES)
+    Language          non-English titles, then an optional required-language
+                      check (NON_FLUENT_LANGUAGES), then an optional check on
+                      the language the advert is written in
+                      (UNREADABLE_ADVERT_LANGUAGES)
+  Software titles (including data, machine-learning, cloud and security
+  engineering) are dropped on every source, except titles that name QA or
+  testing, industrial control programming (PLC, SCADA, HMI, DCS, CNC,
+  robotics), vehicle or powertrain work, CFD, CAE, FEA or simulation, or AI
+  integration and implementation work. Entry-level software titles from the
+  local board are also kept, and lifted to the regional score bar.
+  The allow-list reads the location field. A location that names no country
+  is left to the text rules, and a remote job whose advert says it is open
+  worldwide is kept. The required-language check drops an advert that asks
+  for a listed language fluent or at C1, and keeps B1, B2 and "a plus". The
+  advert-language check reads the advert's common words and drops one
+  clearly written in a language you list; a teaser, a mixed advert, one in
+  Cyrillic or one that names English as the working language is never
+  dropped. Both are pattern matches on each sentence and can misread one.
+  Every rejection is counted by reason and logged in one line.
       |
       v
 SCORE
   Each job is scored against every CV separately. Best CV wins and is
-  recorded. Multipliers for a target role in the title and for an
-  industrial or B2B sector match. A Serbian or German advert gains the
-  English equivalents of the terms it uses, from a small glossary, so it
-  is scored on meaning rather than on how much English it contains.
-      |
-      v
-FILTER
-  Titles first: senior titles (Senior, Lead, Principal, Head of, Director
-  and similar, but not Manager), software-development titles except
-  entry-level software and QA roles from the local board, technician,
-  electrician and local civil-engineering titles (optional), and job
-  functions on an optional private list (payroll, HR, marketing). Then dealbreaker
-  keywords, work eligibility (visa sponsorship, citizenship and
-  work-authorization lines), an optional country allow-list, non-English
-  titles, an optional required-language check, an optional check on the
-  language the advert is written in, minimum score. The
-  allow-list reads the location field; a location that names no country
-  is left to the text rules, and a remote job whose advert says it is open
-  worldwide is kept. The language check drops an advert
-  that requires a configured language fluent or at C1, and keeps B1, B2
-  and "a plus"; it is a pattern match on each sentence and can misread
-  one. The advert-language check reads the advert's common words and
-  drops one clearly written in a language you list; a teaser, a mixed
-  advert or one in Cyrillic is never judged. Every rejection is counted by
-  reason and reported.
-  Scam defence: known fake boards and free-hosting apply links are dropped
-  outright; softer scam signals (apply-by-WhatsApp, pay-to-work fees) heavily
-  downrank the listing and flag it so the digest warns before you apply.
+  recorded. A target role in the title and an industrial or B2B sector word
+  lift the score toward 100. Location, remote, sponsorship, experience,
+  source and flow-equipment multipliers then move it. Softer scam signals
+  (apply by WhatsApp, pay-to-work fees) push it far down and flag the job,
+  so the digest warns before you apply. A Serbian or German advert gains
+  the English equivalents of the terms it uses, from a small glossary, so
+  it is scored on meaning rather than on how much English it contains.
+  Apart from hand-saved jobs, a job scoring under 10 is not stored.
       |
       v
 STORE
   SQLite. Unique on the normalised key, so a repeat increments a counter
-  instead of creating a row. Stored rows are kept for a week. A separate
-  send history, which the cleanup never touches, records every job that
-  reached the chat.
+  instead of creating a row. Rows are deleted after a week unless they have
+  a cover letter. A separate send history, which the cleanup never touches,
+  records every job that reached the chat.
       |
       v
-DELIVER
-  Up to three Telegram messages. A main digest (company boards, then quality
-  aggregators, then wildcard, at most 2 per employer, every slot score-gated),
-  a separate "Direct company openings" shortlist drawn only from the employer
-  boards, and a regional message for jobs in the user's own region. Indeed and
-  JSearch are demoted to a last-resort fill so they cannot crowd out the better
-  sources. Before a job is sent, unless it was saved by hand, its posting is
-  checked: company-board jobs against the vendor's API (Greenhouse, Lever,
-  Ashby, SmartRecruiters, Workday), everything else by loading the page. A
-  job the vendor reports closed is dropped and its row deleted; a page that
-  only reads as closed is skipped that day and checked again the next. A
-  timeout or error lets it through, and after 60 checks or 90 seconds the
-  rest go out unchecked. A job whose link was ever sent, or whose title and
-  company were sent in the last 45 days in the same country, is not sent
-  again, and an optional private file (DIGEST_EXCLUDE_FILE) lists jobs
-  handled outside the digest. A source that failed this run, or returned
-  nothing for three runs, is named at the end of the digest.
+DELIVER (telegram_sender.py)
+  Before any job is chosen, three kinds are held back: a job whose link was
+  ever sent, or whose title and company were sent in the last 45 days in
+  the same country; a job on the optional DIGEST_EXCLUDE_FILE list, for
+  jobs already applied to outside the digest; and a stored job that breaks
+  today's hard rules, since the rules can change after a job is stored.
+  Then up to three Telegram messages, in this order. A job goes in one only.
+    Direct company openings   company boards only, up to 10
+    Regional                  jobs whose location names a REGIONAL_MATCH_TERMS
+                              term as a whole word, accents ignored, up to 15,
+                              with its own bar, REGIONAL_MIN_SCORE
+    Main digest               up to 10. Hand-saved jobs first, with no score
+                              bar. Then company boards and quality
+                              aggregators compete on score. Indeed, JSearch
+                              and WeWorkRemotely only fill slots still empty
+  At most 2 jobs per employer in each message, hand-saved jobs aside. Every
+  other slot must clear its message's score bar: DIGEST_MIN_SCORE (default
+  15) for the main and direct messages, REGIONAL_MIN_SCORE (default the
+  same) for the regional one. A thin day sends fewer jobs, and a day when no
+  message has a job sends one short note naming the bars.
+  Before a job is sent its posting is checked, unless it was saved by hand:
+  company-board jobs against the vendor's API (Greenhouse, Lever, Ashby,
+  SmartRecruiters, Workday), everything else, SuccessFactors included, by
+  loading the page. A job the vendor reports closed is dropped and its row
+  deleted; a page that only reads as closed is skipped that day and checked
+  again the next.
+  A timeout or error lets it through, and after 60 checks or 90 seconds the
+  rest go out unchecked. Each chosen job is logged with its score and full
+  link, as "[main] id=N | score=S | title | company | link". A source group
+  whose search raised an error in the latest run, or that returned nothing
+  for three runs in a row, is named at the end of the digest.
       |
       v
 TRACK
-  A second inbox is scanned for application confirmations and rejections.
-  A local dashboard shows the pipeline. A weekly digest reports per-source
-  yield and names any source that has gone quiet.
+  A local dashboard shows what was stored. Two scripts run by hand, outside
+  the schedule: gmail_application_tracker.py marks stored jobs applied or
+  rejected from confirmation emails, and weekly_digest.py sends a summary of
+  the last 7 days, on Mondays only.
 ```
 
 ---
 
 ## Why it exists
 
-I was applying to jobs by hand and losing good listings to the volume of bad ones. The interesting part turned out to be everything except the searching: deduplicating the same job arriving from five places, telling a real match from a keyword-stuffed one, and noticing when a source has quietly stopped returning anything.
+I was applying to jobs by hand and losing good listings to the volume of bad ones. The interesting part turned out to be everything except the searching: deduplicating the same job arriving from several sources, telling a real match from a keyword-stuffed one, and noticing when a source has quietly stopped returning anything.
 
 ---
 
@@ -145,27 +202,31 @@ I was applying to jobs by hand and losing good listings to the volume of bad one
 
 Only what is in the code.
 
-**Reads employer careers pages directly.** Six applicant tracking systems: Greenhouse, Lever, Ashby, SmartRecruiters, Workday and SuccessFactors. You list the companies you want in a config file and it checks their real careers pages daily. No API key, no quota, and the posting is the company's own rather than an aggregator's copy of it. SuccessFactors has no open JSON API, so that adapter reads the public Google Jobs RSS feed a Career Site Builder site publishes at `HOST/sitemap.xml`.
+**Reads employer careers pages directly.** Six applicant tracking systems: Greenhouse, Lever, Ashby, SmartRecruiters, Workday and SuccessFactors. You list the companies you want in a config file and it reads their real careers pages on every run. No API key, no quota, and the posting is the company's own rather than an aggregator's copy of it. SuccessFactors has no open JSON API, so that adapter reads the public Google Jobs RSS feed a Career Site Builder site publishes at `HOST/sitemap.xml`.
 
-**Survives a dead source.** Every source runs inside a wrapper that times it, catches whatever it throws, and records the outcome. One source failing cannot end the run.
+**Survives a dead source.** Each of the seven search sources (company boards, JSearch, the free aggregators as one group, LinkedIn, SerpAPI, Apify, DuckDuckGo) runs inside a wrapper that times it, catches any exception and records the outcome. The Gmail drafts reader has its own error handling and is not timed or recorded. Most adapters also catch their own request errors, so the wrapper usually records a failure as an empty result, not an error.
 
-**Retries transient failures.** 408, 429, 500, 502, 503, 504 and connection errors, with exponential backoff, and it obeys a `Retry-After` header when the server sends one. 401, 403 and 404 are deliberately not retried, because repeating a request the server already rejected wastes quota.
+**Retries transient failures, where it can.** A shared session (`core/http_client.py`) retries 408, 429, 500, 502, 503, 504 and connection errors with exponential backoff, and obeys a `Retry-After` header. 401, 403 and 404 are deliberately not retried, because repeating a request the server already rejected wastes quota. That session covers the company-board list fetches and the LinkedIn guest endpoint only. JSearch, SerpAPI, the free aggregators, Apify, DuckDuckGo, the per-job detail fetches and the Telegram send do not retry.
 
-**Reports its own health.** Each run prints a per-source table and writes it to the database. It warns when one source produces more than 90 percent of results, and names any source that has returned nothing for three consecutive runs, with how many days it has been quiet and its last error. A source that recovers is reported too, because several are free monthly tiers that reset on their own. The same failures are named at the end of the daily Telegram digest, or in a short message on a day with no main digest, with every URL stripped from the error text because a request error can carry an API key.
+**Reports its own health.** Each run prints a per-source table and writes it to the database. It warns when one source produces 90 percent or more of the results, and names any source that has returned nothing for three runs in a row, with how many days it has been quiet and its last error. A source that recovers is reported too, because several are free monthly tiers that reset on their own. The digest names a source group whose search call raised an error in the latest run, or that has been empty for three runs, with every URL stripped from the error text because a request error can carry an API key. Request errors an adapter catches itself (a failed board, a JSearch 429) appear only in the log until the source has been empty for three runs.
 
-**Deduplicates on normalised values.** URLs lose their tracking parameters. Titles lose `(Remote)`, `(m/w/d)`, employment type and trailing locations. Companies lose `Inc`, `GmbH`, `B.V.`, `d.o.o.` and about thirty other legal suffixes. Seniority words stay in the key, so Senior Sales Engineer and Sales Engineer would be two jobs, and there is a test enforcing it. That only matters for titles the filter keeps, since senior titles are now dropped before they are stored.
+**Deduplicates on normalised values.** URLs lose their tracking parameters. Titles lose `(Remote)`, `(m/w/d)`, employment type and trailing locations. Companies lose `Inc`, `GmbH`, `B.V.`, `d.o.o.` and about forty other suffixes and words such as Group and Holding. Seniority words stay in the key, so Senior Sales Engineer and Sales Engineer would be two jobs, and there is a test enforcing it. That only matters for titles the filter keeps, since senior titles are dropped before they are stored.
 
 **Scores per CV, not once.** For each CV it counts how many of that CV's skills appear in the job text, divided by a denominator capped at 25, because a job description will never mention all fifty. The best-scoring CV is stored with the job so the digest can say which one to send.
 
-**Composes a digest by quota.** Guaranteed slots for company boards, aggregators and wildcard, capped at two per employer. A quota is a ceiling and never a floor: if only two board jobs clear the score bar, you get two, and the run says why the rest went unfilled. Indeed and JSearch are demoted to a last-resort fill so a noisy aggregator cannot take over the day, and a second message carries a shortlist drawn only from the employer boards.
+**Drops jobs I cannot legally take.** Export-controlled roles (ITAR, EAR, "US person") and roles that need a security clearance go first. Then the advert's sponsorship and work-authorization lines are read. A refusal to sponsor or a citizenship lock always drops the job. A residency lock ("green card required", "right to work in the UK") drops it unless the advert offers sponsorship. An explicit offer keeps it. With every setting blank, a job is dropped only when its advert says one of those things, or asks for existing work authorization with no worldwide signal. `WORK_ELIGIBLE_REGIONS`, `SPONSORSHIP_ONLY_COUNTRIES` and `ALLOWED_COUNTRIES` tighten or loosen that; `.env.example` explains each.
+
+**Holds back jobs already sent.** The send history keeps every job that reached the chat, and the weekly cleanup never touches it. A link once sent is held back for good, and the same title at the same company for 45 days in the same country, which catches a job reposted under a new link. The old cleanup deleted the send record with the week-old job, so open adverts came back as new.
+
+**Composes the digest by score, not by quota.** The main digest takes up to ten jobs. Hand-saved jobs go first. After that, company boards and quality aggregators compete together on score; there are no separate quotas. Indeed, JSearch and WeWorkRemotely only fill slots left over. At most two jobs per employer, counted across all passes. Every slot except a hand-saved one must clear the score bar, so a thin day sends fewer jobs, and the run logs `Digest short: N/10 filled (score bar X, max 2 per company)`. That line names both possible causes but not which one applied. A separate message carries a shortlist drawn only from the employer boards. Both score bars are settings, and since every chosen job is logged with its score, a bar can be chosen from the log.
 
 **Screens for scams.** Known fake boards and free-hosting apply links are dropped before scoring. Softer signals a real employer never posts, apply-by-WhatsApp or Telegram, pay-to-work fees, reshipping fronts, heavily downrank the listing and flag it, and the flag is stored so it becomes a visible warning in the digest.
 
 **Refuses internal addresses when checking links.** Before a scraped apply link is fetched to see if it is still live, its target is checked, and a private, loopback or cloud-metadata address is refused, on every redirect hop. A stranger's listing cannot point the link checker at the local network.
 
-**Generates cover letters** through the Claude API for the top matches, and saves them as DOCX.
+**Generates cover letters by hand.** `write_cover_letters.py` drafts letters through the Claude API for the best-scoring stored jobs, three by default, and saves them as DOCX. It is not part of the scheduled run.
 
-**Tracks applications** by scanning a second inbox for confirmation and rejection emails, matching them back to stored jobs.
+**Tracks applications.** `gmail_application_tracker.py`, run by hand, scans the main Gmail inbox and an optional second one over IMAP for confirmation and rejection emails from the last 90 days. Each email is matched to a stored job by exact title and company, ignoring case. When no stored job matches, it creates a new row. It has no tests.
 
 ### What it does not do
 
@@ -174,7 +235,7 @@ Only what is in the code.
 - Scoring is keyword matching with multipliers. There are no embeddings and no semantic similarity.
 - Local-language adverts are understood only through a hand-written glossary. A Serbian or German term that is not in it is not understood, and no other language is covered.
 - Deduplication is normalised string matching, not fuzzy across companies. The same job at two subsidiaries with different legal names will appear twice.
-- Cover letters are generated, not sent. Nothing is submitted on your behalf.
+- Nothing sends email. Cover letters are generated, not sent, and nothing is submitted on your behalf.
 
 ---
 
@@ -192,7 +253,7 @@ EXPIRED_PHRASES = [
 ]
 ```
 
-The last four are the problem, and `'404'` is the worst of them.
+Three of the last four are the problem, and `'404'` is the worst of them.
 
 That check is a bare substring search against the entire HTML of the page. A live job listing contains `404` constantly. It appears in build hashes:
 
@@ -231,15 +292,17 @@ Validated 30 active jobs from 233 total     13 percent
 Validated 29 active jobs from 162 total     18 percent
 ```
 
-**The immediate fix** was one argument: link checking was turned off, which restored the results at the cost of occasionally showing a dead listing. That was the right trade, and it is still the default.
+**The immediate fix** was one argument: the link check at search time was turned off, which restored the results at the cost of occasionally showing a dead listing. It is still off. Dead listings are now caught later, and only for the jobs chosen for a digest (see Deliver above).
 
-**The real fix** was removing the four loose phrases and writing tests that stop them coming back. There is now a test asserting that `'404'`, `'page not found'` and `'does not exist'` are not in the list, and another that builds a realistic live page containing `app.404abc12.css` and an inline `if(c===404)` handler and asserts it matches no expiry phrase. A third asserts that 100 fresh jobs survive validation whole, so a future regression trips a test instead of quietly shrinking the digest.
+**The real fix** was removing the three loose phrases, `'404'`, `'page not found'` and `'does not exist'`, and writing tests that stop them coming back. One test per phrase asserts it stays out of the list, and another builds a realistic live page containing `app.404abc12.css` and an inline `if(c===404)` handler and asserts it matches no expiry phrase. A third asserts that 100 fresh jobs survive validation whole, so a future regression trips a test instead of quietly shrinking the digest.
 
-**What I took from it.** The bug was one string in a list. What made it expensive was that discarding was silent. Every filter in the pipeline now counts what it rejected and why, and reports it:
+**What I took from it.** The bug was one string in a list. What made it expensive was that discarding was silent. The main filter now counts every rejection by reason and logs it:
 
 ```
 Filtered 46 of 125 jobs (79 rejected: geo_restricted=12, below_min_score=67)
 ```
+
+Deduplication prints its counts by kind. The validator, now only a 14-day age check, still reports only how many it kept.
 
 If that line had existed, this would have been a five minute problem.
 
@@ -247,24 +310,25 @@ If that line had existed, this would have been a five minute problem.
 
 ## Stack
 
-Python 3.11 or newer, no framework.
+Python 3.10 or newer: the code uses 3.10 syntax, and the `ddgs` and `apify-client` packages require it. The suite passes on 3.14, and the container runs 3.12. No agent or scraping framework; Flask serves the optional dashboard only.
 
 | | |
 |---|---|
-| HTTP | `requests` with a `urllib3` retry adapter |
-| Parsing | `beautifulsoup4`, `pdfplumber` for CVs |
+| HTTP | `requests`. A `urllib3` retry adapter covers the company-board list fetches and LinkedIn only |
+| Parsing | `beautifulsoup4` for HTML pages, `PyYAML` for the master CV |
 | Storage | SQLite, WAL mode, standard library `sqlite3` |
-| Generation | Anthropic Claude API |
-| Delivery | Telegram Bot API, Gmail over IMAP and SMTP |
+| Generation | Anthropic Claude API, cover letters only |
+| Input | Gmail over IMAP: job links saved as drafts, and application emails |
+| Delivery | Telegram Bot API |
 | Dashboard | Flask |
 | Tests | pytest |
 | Normalisation | standard library only, `re` and `urllib.parse` |
 
-871 tests, covering scoring, filtering, deduplication, storage, source health, digest composition, the scam screen, the SSRF guard on link checking, retry policy, local-language scoring and three regressions that each cost real results. Every test runs against fixtures and temporary files. No test touches a real database or makes a network call.
+873 tests, covering scoring, filtering, title rules, work eligibility, language rules, deduplication, storage, the send history, the pre-send liveness check, source health, digest composition and volume, the scam screen, the SSRF guard on link checking, retry policy, local-language scoring and three regressions that each cost real results. Tests run against fixtures and temporary files, and no test makes a network call.
 
-One file, `tests/test_end_to_end.py`, runs a whole day through the real pipeline in order: search, dedup, description fetch, scoring, storage, digest selection and sending. Only the edges are replaced: fake job boards (one of which crashes), a temporary database, and Telegram's HTTP call captured instead of sent. It then checks what would have reached the chat: the strong match is there once, the weak match and the dealbreaker are not, the local-language advert lands in the regional message, the crashing source is named, nothing repeats the next day, and a failed send is retried. Each of those checks was confirmed to fail when the rule it guards is switched off.
+One file, `tests/test_end_to_end.py`, runs a whole day through the real pipeline in order: search, dedup, description fetch, scoring, storage, digest selection and sending. Only the edges are replaced: fake job boards (one of which crashes), a temporary database, and Telegram's HTTP call captured instead of sent. It then checks what would have reached the chat: the strong match is there once, the weak match and the dealbreaker are not, the local-language advert lands in the regional message, the crashing source is named, nothing repeats the next day, a job reposted under a new link after the cleanup is not sent again, every sent job is logged with its full link, and a failed send goes out the next day. The duplicate check tests three dedup layers together, so switching off one layer does not fail it.
 
-The connectors have tests now. Not by mocking ten third-party APIs, which is a larger job than this project justifies, but by capturing one real response per source, trimming it to two jobs, and asserting on the record the parser produces. That covers the half of a connector that breaks silently: the mapping from somebody else's JSON shape into ours.
+The connectors have tests too. Not by mocking every third-party API, which is a larger job than this project justifies, but by capturing one real response for six sources (Greenhouse, Lever, Ashby, RemoteOK, Remotive, Jobicy), trimming it to two jobs, and asserting on the record the parser produces. SuccessFactors is tested on a hand-written feed. The other connectors, out of more than twenty sources, have no parser fixture. What the fixtures cover is the half of a connector that breaks silently: the mapping from somebody else's JSON shape into ours.
 
 They were written because three bugs were found in that layer by hand, all with the same shape. The Jobicy connector sent a geo value the API rejects, so it answered 400 to every request and returned nothing on every run. The Muse fetched an unfiltered feed and discarded 99 percent of it in Python. And the Greenhouse description parser unescaped HTML after stripping tags instead of before, so every Greenhouse description arrived full of markup and fed tag names and data attributes straight into keyword scoring.
 
@@ -280,7 +344,7 @@ What they do not cover is the network. The fixtures go stale if a provider chang
 
 ```bash
 git clone https://github.com/wule15/Job-intelligence-agent.git
-cd job-intelligence-agent
+cd Job-intelligence-agent
 python -m venv .venv
 source .venv/bin/activate      # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
@@ -289,75 +353,72 @@ pip install -r requirements.txt
 **2. Configure credentials.**
 
 ```bash
-cp .env.example .env
+cp .env.example core/.env
 ```
 
-Fill in `.env`. Only three blocks are required:
+Fill in `core/.env`. A `.env` at the repo root is never loaded. Nothing is checked at start-up, and the blocks differ in importance:
 
-- **Gmail**, for reading saved job links. Needs an app password, not your account password. Google Account, Security, 2-Step Verification, App passwords.
-- **Telegram**, for the digest. Create a bot with [@BotFather](https://t.me/botfather) for the token, message it once, then run `python get_chat_id.py` for the chat id.
-- **Anthropic**, for cover letters. [console.anthropic.com](https://console.anthropic.com/)
+- **Telegram** is the one block the daily digest needs. Create a bot with [@BotFather](https://t.me/botfather) for the token, message it once, then run `python get_chat_id.py` for the chat id.
+- **Gmail** is optional. It reads job links you save as drafts, and the application tracker scans it. It needs an app password, not your account password: Google Account, Security, 2-Step Verification, App passwords. Without it the run logs a warning and continues.
+- **Anthropic** is optional. Only `write_cover_letters.py` uses it. [console.anthropic.com](https://console.anthropic.com/)
 
-Every job board key is optional. A missing key disables that one source and the run continues.
+Every job board key is optional. A missing key skips that one source and the run continues.
 
 **3. Choose the companies you want to work for.**
 
 ```bash
-cp config/companies.example.json config/companies.json
+mkdir -p core/config
+cp config/companies.example.json core/config/companies.json
 ```
 
-Edit it. This is the highest-value part of the setup, and the example file explains how to find a company's board. You read it off their careers page URL:
+Edit it. This is the highest-value part of the setup, and the example file explains how to find a company's board. You read it off their careers page URL. Every entry needs a `"slug"`; an entry without one is skipped with a warning.
 
 ```
 boards.greenhouse.io/SLUG          ->  "ats": "greenhouse", "slug": "SLUG"
-jobs.lever.co/SLUG                 ->  "ats": "lever"
-jobs.ashbyhq.com/SLUG              ->  "ats": "ashby"
-jobs.smartrecruiters.com/SLUG      ->  "ats": "smartrecruiters"
-TENANT.wdN.myworkdayjobs.com/SITE  ->  "ats": "workday", plus "wd" and "site"
+jobs.lever.co/SLUG                 ->  "ats": "lever", "slug": "SLUG"
+jobs.ashbyhq.com/SLUG              ->  "ats": "ashby", "slug": "SLUG"
+jobs.smartrecruiters.com/SLUG      ->  "ats": "smartrecruiters", "slug": "SLUG"
+TENANT.wdN.myworkdayjobs.com/SITE  ->  "ats": "workday", "slug": "TENANT", "wd": "N", "site": "SITE"
 career-site host (e.g. jobs.acme.com) -> "ats": "successfactors", "slug": host
 ```
 
-Verify a slug before trusting it. Searching the web for a company's Workday URL turns up plenty of live boards belonging to somebody else, and a wrong tenant returns 200 with thousands of jobs that look completely normal until you read them.
+An optional `"max_jobs"` caps a large board.
+
+Verify a slug before trusting it. Searching the web for a company's Workday URL turns up plenty of live boards belonging to somebody else. A live tenant that belongs to another company returns 200 with thousands of jobs that look normal until you read them. A tenant that does not exist returns 401.
 
 **4. Write your CV profile.**
 
 ```bash
-cp master-cv.example.yaml master-cv.yaml
+cp master-cv.example.yaml core/master-cv.yaml
 ```
 
-Fill in the `variants:` section: one entry per version of yourself you want to
-match against (for example a sales-engineering CV and a technical-content CV),
-each with its skills. The scorer and the query builder both read this file
-directly. It is gitignored and it is required: with no `master-cv.yaml` the
-query builder produces no queries and every search-driven source is starved, so
-do not skip it. `resumes/` (the source PDFs) is optional and only feeds a legacy
-fallback.
+Or point `MASTER_CV_PATH` in `core/.env` at another file. Fill in the `variants:` section: one entry per version of yourself you want to match against (for example a sales-engineering CV and a technical-content CV), each with its skills. The scorer and the query builder both read this file directly. It is gitignored and it is required: without it the run builds no search queries and every job scores 0, so do not skip it.
 
 **5. Check it works.**
 
 ```bash
-python validate_system.py     # configuration and connectivity
-pytest                        # 816 tests, no network
-python job_search_smart.py    # one real run
+pip install -r requirements-dev.txt
+python -m pytest              # 873 tests, no network
+python job_search_smart.py    # one real run: search, score, store
+python telegram_sender.py     # send the digest
 ```
 
 A run prints a per-source table. If one source is producing everything, that is worth knowing on day one.
 
+`validate_system.py` is an older end-to-end smoke test: one live search, then three cover letters through the Claude API. It costs API calls and is not needed.
+
 **6. Schedule it.**
 
-There is no scheduler inside the application. Use whatever your operating system provides.
+There is no scheduler inside the application. Use whatever your operating system provides, and run the two steps one after the other, because a search can take several minutes and the send must start after it ends.
 
 ```bash
 # Linux or macOS, crontab -e
-0 9 * * * cd /path/to/job-intelligence-agent && .venv/bin/python job_search_smart.py
-5 9 * * * cd /path/to/job-intelligence-agent && .venv/bin/python telegram_sender.py
+0 9 * * * cd /path/to/Job-intelligence-agent && (.venv/bin/python job_search_smart.py; .venv/bin/python telegram_sender.py)
 ```
 
-On Windows, use Task Scheduler pointed at the same two commands.
+On Windows, use one Task Scheduler task with the two commands as two actions, in that order, each starting in the repo folder. A task runs its actions one after another.
 
-Those two commands are the whole scheduled pipeline. `job_search_smart.py`
-searches every source, deduplicates, scores and stores. `telegram_sender.py`
-composes the digest from what is stored and sends it.
+Those two commands are the whole scheduled pipeline. `job_search_smart.py` searches every source, deduplicates, scores and stores. `telegram_sender.py` composes the digest from what is stored and sends it. The send runs even if the search failed, so jobs stored by an earlier run still go out.
 
 **7. Optional, cover letters by hand.**
 
@@ -367,13 +428,9 @@ python write_cover_letters.py --search     # search first, then use the results
 python write_cover_letters.py --limit 5    # default is 3
 ```
 
-Drafts DOCX cover letters through the Claude API. This is a manual path, not
-part of the scheduled run, and it sends nothing. Letters land in `output/`,
-which is gitignored, and you review them before they go anywhere.
+Drafts DOCX cover letters through the Claude API. This is a manual path, not part of the scheduled run, and it sends no email. Letters land in `core/output/docx cover letters/`, which is gitignored, and you review them before they go anywhere. If Telegram is set up, it sends one message saying how many were written.
 
-The default reads what the scheduled run already stored and skips any job that
-already has a letter, so running it twice does not pay for the same letter
-twice. Each letter is one API call, which is why the count is capped.
+The default reads what the scheduled run already stored and skips any job that already has a letter, so running it twice does not pay for the same letter twice. Each letter is one API call, which is why the count is capped.
 
 **8. Optional dashboard.**
 
@@ -385,24 +442,16 @@ python dashboard.py           # http://localhost:5000
 
 _Screenshot uses sample data. The dashboard reads only your own local database._
 
-A local Flask dashboard over your own database. It runs entirely on your
-machine and reads only your local DB, so nothing about your search leaves the
-laptop and each user sees only their own data.
+A local Flask dashboard over your own database. It runs Flask's debug server bound to 127.0.0.1, so it is for your own machine only, and it reads only your local database. The page loads its styles and fonts from public CDNs.
 
-It lists every job the pipeline found, each with its relevance score, which CV
-variant scored it, the source, detected industry, and how many times it has
-been relisted. From there you can:
+It lists every stored job, each with its relevance score, source, detected industry (a keyword guess from the title and description), and a marker when it has been relisted. From there you can:
 
-- **Filter** by minimum score, source, date, industry, origin (email or
-  search), and which inbox the job came from.
-- **Track applications.** Mark any job `applied`, `interviewing`, or
-  `rejected`. The status persists and the header keeps a running count.
-- **Jump to the source email.** Jobs found through the email tracker deep-link
-  straight to the original Gmail message.
-- **Export to CSV**, pull up similar jobs, or delete a dead link, inline.
+- **Filter** by minimum score, source, date, industry, origin (email or search), and which inbox the job came from.
+- **Track applications.** Mark any job `applied`, `interviewing`, or `rejected`. The status persists and the header keeps a running count.
+- **Search Gmail for the source email.** Jobs created by the application tracker open a Gmail search for the company and title in the inbox they came from.
+- **Export to CSV**, pull up similar jobs (which also shows the CV that scored each one), or delete a dead link, inline.
 
-A `/stats` endpoint returns totals, source count, and average and top score as
-JSON.
+A `/stats` endpoint returns the job count, source count, and average and top score as JSON.
 
 **9. Optional, run it in a container.**
 
@@ -411,34 +460,17 @@ docker build -t job-agent .
 docker run --rm --env-file core/.env -e TZ=CET-1CEST,M3.5.0,M10.5.0/3   -v "$(pwd)/core/data:/app/core/data"   -v "$(pwd)/core/config/companies.json:/app/core/config/companies.json:ro"   -v "$(pwd)/core/master-cv.yaml:/app/core/master-cv.yaml:ro"   job-agent
 ```
 
-The container does what the scheduled task does on the host: one search, then
-the Telegram digest. Tested on 2026-10-01 with real settings: a full run inside
-the container read 2,448 jobs, kept 174 and sent the three digest messages.
+The container does what the scheduled task does on the host: one search, then the Telegram digest. Tested on 2026-10-01 with real settings: a full run inside the container read 2,448 jobs, kept 174 and sent the three digest messages.
 
-Credentials arrive at runtime through `--env-file`. The database, the company
-list and the CV file stay on the host and are mounted, the last two read-only.
-None of them is ever copied into the image. The paths sit under `core/`
-because `core/config.py` resolves everything relative to itself.
+Credentials arrive at runtime through `--env-file`. The database, the company list and the CV file stay on the host and are mounted, the last two read-only. None of them is ever copied into the image. The paths sit under `core/` because `core/config.py` resolves everything relative to itself.
 
-That is what `.dockerignore` is for, and it is doing more work than it looks
-like. Excluding a file from a build context is not the same as excluding it
-from git. A build context is copied wholesale before the first instruction
-runs, and anything it carries into a layer stays in that layer even if a later
-step deletes it. So `.env` files, credentials, databases, the CV and the
-company list are kept out at the boundary rather than cleaned up afterwards,
-because afterwards is too late. Every pattern is written with `**/`, because a
-plain `.env` pattern only matches at the top of the build context and would let
-`core/.env` through.
+That is what `.dockerignore` is for, and it is doing more work than it looks like. Excluding a file from a build context is not the same as excluding it from git. A build context is copied wholesale before the first instruction runs, and anything it carries into a layer stays in that layer even if a later step deletes it. So `.env` files, credentials, databases, the CV and the company list are kept out at the boundary rather than cleaned up afterwards, because afterwards is too late. The patterns for those are written with `**/`, because a plain `.env` pattern only matches at the top of the build context and would let `core/.env` through.
 
-`TZ` sets the clock the log and digest timestamps use. The slim image has no
-time zone database, so it takes a POSIX rule rather than a name like
-`Europe/Berlin`; the one above is Central European time with summer time.
-Without it the container runs on UTC.
+Under `--env-file`, a blank line such as `SERPAPI_BUDGET=` arrives as an empty value rather than a missing one. For `SERPAPI_BUDGET`, `JSEARCH_BUDGET` or `NON_EUROPE_PREFERENCE` that stops the run at start-up, so keep a number there or delete the line. On the host a blank value falls back to the default.
 
-The image pins Python 3.12 rather than tracking latest, so a new release cannot
-change the behaviour of a scheduled run without anyone touching the code, and
-it runs as a non-root user with a fixed uid so a volume written inside the
-container stays readable on the host.
+`TZ` sets the clock the log and digest timestamps use, for example `TZ=Europe/Berlin`. The POSIX rule in the command above, Central European time with summer time, works too. Without it the container runs on UTC.
+
+The image pins Python 3.12 rather than tracking latest, so a new release cannot change the behaviour of a scheduled run without anyone touching the code, and it runs as a non-root user with a fixed uid so a volume written inside the container stays readable on the host.
 
 ---
 
@@ -446,9 +478,11 @@ container stays readable on the host.
 
 ![Daily digest in Telegram](docs/telegram-digest.png)
 
-Up to ten in the main digest plus a separate direct-from-company shortlist and a regional message, capped at two per employer, each one carrying the score and which CV scored it.
+_Screenshot from August 2026, before senior titles were dropped and before each job showed its source._
 
-The percentages are a ranking device, not a probability. A score starts as the count of that CV's skill terms appearing in the job text over a denominator capped at 25. A target role in the title and an industrial or B2B sector word in the advert each lift it part of the way to 100, and location, remote, experience and source multipliers then move it up or down. So before those multipliers, one matched term in an advert that names a target sector already scores about 33, each further term adds about 3, and 40 percent means roughly four terms matched, not that the job is a 40 percent fit. It exists to order the list and to fill the quota, and the known weaknesses section below is honest about what it cannot see.
+Up to ten jobs in the main digest, up to ten in the direct-from-company shortlist and up to fifteen in the regional message, at most two per employer in each. Every job carries its score, its source and the CV that scored it.
+
+The percentages are a ranking device, not a probability. A score starts as the count of that CV's skill terms found in the job text, over a denominator capped at 25. A target role in the title lifts it part of the way to 100, but only when the advert alone already matches at least 20 percent, or when there is no advert text at all. An industrial or B2B sector word does the same. Location, remote, sponsorship, experience, source and flow-equipment multipliers then move it up or down, a suspected scam is pushed down, and the result is capped at 100. So in an advert that names a target sector, one matched term scores about 33 before the multipliers, each further term adds about 3, and 40 means three or four terms matched, not that the job is a 40 percent fit. It exists to order the list and to apply the score bar, and the known weaknesses section below is honest about what it cannot see.
 
 ---
 
@@ -456,11 +490,11 @@ The percentages are a ranking device, not a probability. A score starts as the c
 
 The three I would raise first if you were reviewing this.
 
-**The connector tests are fixture based, so they will go stale.** They pin the parser against a response captured on one day. If a provider changes their JSON shape the tests keep passing and the connector quietly stops working, which is the exact failure they were written to catch. They need re-capturing periodically and nothing currently reminds anyone to do it.
+**The title rules are hand-kept keyword lists.** Senior, software, support and trade titles are matched by patterns I wrote and extend by hand. They miss reversed titles: "Backend Engineer" is dropped, but "Engineer, Backend" and "Developer, Python" get through. Every new title family that slips past needs a new pattern, and nothing finds those families except reading the digest.
 
-**Deduplication is normalisation, not understanding.** It handles decorated titles and legal suffixes well. It cannot tell that two differently named subsidiaries of the same group are one employer, and it will not catch a job reposted with a genuinely different title.
+**Fit is judged by keyword scoring.** Skill terms are matched with a synonym map and boosted by role and sector. It has no notion of meaning, so a job that lists technologies without requiring them scores the same as one that requires them. On one replayed batch, the October rule changes raised the share of plausible fits to about 50 percent. On a live day the useful share was about 20 percent.
 
-**Scoring is keyword counting.** Skill terms are matched with a synonym map and boosted by role and sector. It has no notion of meaning, so a job description that lists technologies without requiring them scores the same as one that does.
+**Hard requirements in the advert text still get through.** Years of experience only lower the rank (five or more years multiplies the score by 0.85, eight or more by 0.75) and never drop a job, so a role asking for ten years still reaches the digest when the rest matches. Student-only adverts, such as working-student roles that require current enrolment, are not recognised in English at all.
 
 ---
 
