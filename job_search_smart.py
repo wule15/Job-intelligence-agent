@@ -591,7 +591,10 @@ class SmartJobSearcher:
 
         # Score and filter. JobFilter.filter_jobs owns every rejection rule:
         # dealbreaker keywords, geo restriction, non-English titles and the
-        # score cutoff. It logs a breakdown of what it rejected and why.
+        # score cutoff. It logs a breakdown of what it rejected and why. It
+        # also keeps one copy of a posting printed in two languages (same
+        # posting number, same company), chosen among the jobs that passed,
+        # which is why that check is not part of the deduplication above.
         print(f"[*] Ranking jobs by relevance to your profile...")
         scored_jobs = self.filter.filter_jobs(valid_jobs, min_score=MIN_RELEVANCE_SCORE)
 

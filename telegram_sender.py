@@ -19,7 +19,8 @@ from core import source_health
 from core.config import PROJECT_ROOT, Config
 from core.countries import COUNTRY_NAMES, location_countries
 from core.job_filter import (
-    ALWAYS_INCLUDE_SOURCES, fails_advert_language, fails_eligibility, is_flow_equipment_role,
+    ALWAYS_INCLUDE_SOURCES, content_drop_reason, fails_advert_language, fails_eligibility,
+    is_flow_equipment_role,
     matches_region, requires_unspoken_language, scam_risk, title_drop_reason,
 )
 from core.job_normalize import (
@@ -514,8 +515,8 @@ def suppress_ineligible():
     days after the export-control rule shipped. This runs the same hard rules
     (the title rules, dealbreakers, export control, work eligibility, excluded
     locations, the country allow-list, a required language, an advert written
-    in a language the user cannot read) on every unsent row before any digest
-    is chosen.
+    in a language the user cannot read, too many required years, an
+    electrical-only degree) on every unsent row before any digest is chosen.
 
     Held-back ids go into telegram_sent_jobs, like repeats, so the selection
     code needs no change, and each one is logged with its reason and full
@@ -541,6 +542,8 @@ def suppress_ineligible():
                     reason = 'language_required'
                 if not reason and fails_advert_language(description or ''):
                     reason = 'advert_language'
+                if not reason:
+                    reason = content_drop_reason(title or '', description or '')
                 if reason:
                     held.append(job_id)
                     print(f"[ineligible:{reason}] id={job_id} | {title} | {company} | {link or ''}")

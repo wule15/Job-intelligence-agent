@@ -312,3 +312,50 @@ def find_near_duplicates(jobs, threshold=0.85):
             seen.append(title)
 
     return duplicates
+
+
+# The employer's own posting number, as an advert prints it: "Job ID 12345",
+# "Req ID: JR-2026-0001", "Stellennummer: 2026/0412". A company that posts one
+# job in two languages gives the two adverts different links and different
+# titles, but the same number. The whole number is read, so two postings
+# numbered by year ("2026-1234", "2026-5678") stay two jobs.
+_POSTING_REF = re.compile(
+    r'\b(?:job|req(?:uisition)?|posting|stellen)[\s-]*'
+    r'(?:id|no|nr|number|nummer|#)\.?\s*[:#]?\s*'
+    r'([a-z]{0,4}-?\d{3,}(?:[-/_.]\d+)*)\b(?![-/_.]\d)')
+
+
+def posting_reference(description):
+    """The posting number printed in an advert, lower-cased, or ''."""
+    match = _POSTING_REF.search(fold_diacritics(description or ''))
+    return match.group(1) if match else ''
+
+
+def find_same_postings(jobs):
+    """
+    Return the indices of jobs whose advert prints the same posting number
+    as an earlier job at the same normalised company.
+
+    This catches one posting published in two languages. Order matters: the
+    first occurrence is kept, so the caller sorts the list by preference
+    first. The filter calls it on the jobs that passed every rule, sorted by
+    score, so the copy kept is the best one the candidate can read.
+
+    Args:
+        jobs: list of dicts with 'company' and 'description'
+
+    Returns:
+        set of indices into `jobs` that should be dropped
+    """
+    refs_by_company = {}
+    duplicates = set()
+    for index, job in enumerate(jobs):
+        ref = posting_reference(job.get('description', ''))
+        if not ref:
+            continue
+        seen = refs_by_company.setdefault(normalize_company(job.get('company', '')), set())
+        if ref in seen:
+            duplicates.add(index)
+        else:
+            seen.add(ref)
+    return duplicates

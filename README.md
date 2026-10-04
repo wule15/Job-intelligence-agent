@@ -114,6 +114,19 @@ FILTER
                       check (NON_FLUENT_LANGUAGES), then an optional check on
                       the language the advert is written in
                       (UNREADABLE_ADVERT_LANGUAGES)
+    Requirements      optional required-years gate (MAX_REQUIRED_YEARS) and
+                      optional electrical-only degree rule
+                      (DROP_ELECTRICAL_ONLY_DEGREE)
+  The years gate drops an advert that requires more years than the limit.
+  A range counts as its lower bound, an upper limit ("up to 5 years") is
+  not a requirement, and years marked preferred or a plus in the same
+  clause do not drop. When one sentence offers a route within the limit
+  joined by "or", the lower route decides. The degree rule drops an advert
+  whose degree line names electrical or electronics engineering. It keeps
+  the advert when a mechanical engineer is named anywhere in it, when a
+  sentence that names a degree also names a second discipline or a generic
+  alternative ("or a related field", "or Computer Science"), or when the
+  electrical degree is only preferred.
   Software titles (including data, machine-learning, cloud and security
   engineering) are dropped on every source, except titles that name QA or
   testing, industrial control programming (PLC, SCADA, HMI, DCS, CNC,
@@ -142,7 +155,11 @@ SCORE
   the English equivalents of the terms it uses, from a small glossary, so
   it is scored on meaning rather than on how much English it contains.
   A job scoring under 10 before the multipliers is not stored, except
-  hand-saved jobs and entry-level software from the local board.
+  hand-saved jobs and entry-level software from the local board. Of the
+  jobs left, two at one company whose adverts print the same posting
+  number ("Job ID 12345") are one job, which catches a posting published
+  in two languages. The higher-scored copy is kept, and a hand-saved job
+  is never dropped this way.
       |
       v
 STORE
@@ -327,7 +344,7 @@ Python 3.10 or newer: the code uses 3.10 syntax, and the pinned `ddgs` release r
 | Tests | pytest |
 | Normalisation | standard library only, `re` and `urllib.parse` |
 
-875 tests, covering scoring, filtering, title rules, work eligibility, language rules, deduplication, storage, the send history, the pre-send liveness check, source health, digest composition and volume, the scam screen, the SSRF guard on link checking, retry policy, local-language scoring and three regressions that each cost real results. Tests run against fixtures and temporary files, and no test makes a network call.
+1003 tests, covering scoring, filtering, title rules, work eligibility, language rules, deduplication, storage, the send history, the pre-send liveness check, source health, digest composition and volume, the scam screen, the SSRF guard on link checking, retry policy, local-language scoring and three regressions that each cost real results. Tests run against fixtures and temporary files, and no test makes a network call.
 
 One file, `tests/test_end_to_end.py`, runs a whole day through the real pipeline in order: search, dedup, description fetch, scoring, storage, digest selection and sending. Only the edges are replaced: fake job boards (one of which crashes), a temporary database, and Telegram's HTTP call captured instead of sent. It then checks what would have reached the chat: the strong match is there once, the weak match and the dealbreaker are not, the local-language advert lands in the regional message, the crashing source is named, nothing repeats the next day, a job reposted under a new link after the cleanup is not sent again, every sent job is logged with its full link, and a failed send goes out the next day. The duplicate check tests three dedup layers together, so switching off one layer does not fail it.
 
@@ -401,7 +418,7 @@ Or point `MASTER_CV_PATH` in `core/.env` at another file. Fill in the `variants:
 
 ```bash
 pip install -r requirements-dev.txt
-python -m pytest              # 875 tests, no network
+python -m pytest              # 1003 tests, no network
 python job_search_smart.py    # one real run: search, score, store
 python telegram_sender.py     # send the digest
 ```
@@ -501,7 +518,7 @@ The three I would raise first if you were reviewing this.
 
 **Fit is judged by keyword scoring.** Skill terms are matched with a synonym map and boosted by role and sector. It has no notion of meaning, so a job that lists technologies without requiring them scores the same as one that requires them. On one replayed batch, the October rule changes raised the share of plausible fits to about 50 percent. On a live day the useful share was about 20 percent.
 
-**Hard requirements in the advert text still get through.** Years of experience only lower the rank (five or more years multiplies the score by 0.85, eight or more by 0.75) and never drop a job, so a role asking for ten years still reaches the digest when the rest matches. Student-only adverts, such as working-student roles that require current enrolment, are not recognised in English at all.
+**Requirements in the advert text are read by pattern, and some are misread.** Years of experience are read only when a number sits in the same sentence as the word "experience" (the Serbian "iskustvo", the German "Erfahrung"), so "minimum 4 years of site inspection" is not seen, and a bullet that says only "5 years in pump sales" is read only when it sits directly under an "Experience:" heading. A preference word anywhere in a clause marks every figure in that clause preferred, a preference word the rule does not know leaves the years read as required, and the years gate ignores any figure above 15 years as the company describing itself. Alternative routes are read only as years against years, so "PhD or 5 years of experience" drops. At or below MAX_REQUIRED_YEARS, or with it unset, years only lower the rank (three or four years multiplies the score by 0.95, five or more by 0.85, eight or more by 0.75). The electrical-degree rule errs toward keeping: an advert that names mechanical engineers anywhere, even as colleagues, is kept. It still drops an advert whose alternative is written in words it does not know. Student-only adverts, such as working-student roles that require current enrolment, are not recognised in English at all.
 
 ---
 

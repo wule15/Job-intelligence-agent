@@ -64,6 +64,22 @@ def flag_setting(raw):
     return str(raw or '').strip().lower() in ('1', 'true', 'yes', 'on')
 
 
+def years_setting(raw, name=''):
+    """
+    A whole number of years, or None for blank. None turns the rule off.
+
+    A value that is not a whole number also gives None, with one printed
+    warning, so a typo in .env cannot stop the scheduled morning run.
+    """
+    if raw is None or not str(raw).strip():
+        return None
+    try:
+        return max(0, int(str(raw).strip()))
+    except ValueError:
+        print(f"[!] {name or 'Years setting'} is not a whole number, rule off")
+        return None
+
+
 class Config:
     """Configuration class for the application."""
 
@@ -170,6 +186,17 @@ class Config:
     # unless the title also names an engineer, see core/job_filter.py. Which
     # trades to rule out is personal, so it is off by default.
     DROP_LOCAL_TRADE_TITLES = flag_setting(os.getenv("DROP_LOCAL_TRADE_TITLES"))
+    # MAX_REQUIRED_YEARS drops an advert that requires more years of
+    # experience than this, e.g. 3 drops "at least 4 years of experience" and
+    # keeps "3-5 years of experience", since a range counts as its lower
+    # bound. Years marked preferred or a plus never drop. At or below the
+    # limit, years still only lower the rank. Blank (the default) never drops.
+    MAX_REQUIRED_YEARS = years_setting(os.getenv("MAX_REQUIRED_YEARS"), "MAX_REQUIRED_YEARS")
+    # DROP_ELECTRICAL_ONLY_DEGREE drops an advert whose degree requirement
+    # names electrical or electronics engineering and no mechanical,
+    # mechatronics or "related field" alternative. For a mechanical engineer;
+    # off by default.
+    DROP_ELECTRICAL_ONLY_DEGREE = flag_setting(os.getenv("DROP_ELECTRICAL_ONLY_DEGREE"))
     # NON_EUROPE_PREFERENCE ranks Europe above other acceptable regions without
     # hiding them. 1.0 disables the preference entirely.
     NON_EUROPE_PREFERENCE = float(os.getenv("NON_EUROPE_PREFERENCE", "1.0"))

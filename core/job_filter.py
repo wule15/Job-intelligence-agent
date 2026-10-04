@@ -16,6 +16,7 @@ from core.utils import setup_logging
 from core.synonym_map import skill_matches
 from core.multilingual import canonical_language, english_equivalents, fold_diacritics, written_in
 from core.cv_variants import load_variants
+from core.job_normalize import find_same_postings
 
 logger = setup_logging('job_filter')
 
@@ -1197,36 +1198,118 @@ def is_export_controlled(text: str) -> bool:
 
 
 # ── Required experience ───────────────────────────────────────────────────────
-# Years of experience lower a job's rank and never drop it. The candidate has a
-# little under three years, so up to two years is a full match, three or four is
-# a stretch worth only a slight nudge, and five or more is a real gap. A
-# requirement marked preferred or a plus counts for half the penalty.
+# Years of experience lower a job's rank. The candidate has a little under
+# three years, so up to two years is a full match, three or four is a stretch
+# worth only a slight nudge, and five or more is a real gap. A requirement
+# marked preferred or a plus counts for half the penalty. Above
+# Config.MAX_REQUIRED_YEARS, when it is set, a requirement drops the job.
 #
-# Only numbers that sit next to the word "experience" are read, and a number
-# the company uses about itself ("founded 20 years ago", "we have 30 years of
-# experience") is ignored, since it says nothing about the candidate.
+# Only a number in the same sentence as the word "experience" (Serbian
+# "iskustvo", German "Erfahrung") is read, and it must sit within 45
+# characters before or 60 after it. Skipped:
+#   - the company describing itself: "founded 20 years ago", "we have 30
+#     years of experience", "With over 10 years of experience, Acme is a
+#     leader", "Sa vise od 10 godina iskustva, nasa firma je lider"
+#   - an upper limit: "up to 5 years", "less than 5 years", "do 5 godina"
+#   - years that measure something else: a degree, a contract, a programme
+#     ("a 4 year college degree", "a 5 year contract", "the programme lasts
+#     between two and four years"), or a point in the future ("within 3 years")
 _WORD_NUMBERS = {
     'one': 1, 'two': 2, 'three': 3, 'four': 4, 'five': 5, 'six': 6,
     'seven': 7, 'eight': 8, 'nine': 9, 'ten': 10, 'twelve': 12,
     'fifteen': 15, 'twenty': 20,
 }
 _NUM = r'(\d{1,2}|' + '|'.join(_WORD_NUMBERS) + r')'
+# "five (5) years": the digits repeated in brackets.
+_IN_BRACKETS = r'(?:\s*\(\d{1,2}\))?'
+# "5 or more years", "5 ili vise godina", "3 i vise godina".
+_OR_MORE = r'(?:\s+(?:or|and|i|ili|oder|und)\s+(?:more|above|vise|preko|mehr))?'
+# "3-5", "3 to 5", "3 do 5", "between 3 and 5", "3 bis 5". The en dash, em
+# dash and minus sign count as a hyphen.
+_RANGE_SEP = r'(?:\s*[-\u2013\u2014\u2212]\s*|\s+(?:to|or|and|do|ili|i|bis)\s+)'
 _YEARS_RE = re.compile(
-    r'\b' + _NUM + r'\s*(?:\+|plus)?\s*'
-    r'(?:(?:-|\u2013|to|or)\s*' + _NUM + r'\s*\+?\s*)?'
-    r'(?:years?|yrs?)\b')
+    r'(?<![\d.,])\b' + _NUM + _IN_BRACKETS + r'\s*(?:\+|plus)?' + _OR_MORE
+    + r'(?:' + _RANGE_SEP + _NUM + _IN_BRACKETS + r'\s*\+?)?'
+    r'[\s-]*(?:years?|yrs?|godin[aeu]?|god|jahre?n?)\b')
+_EXPERIENCE_WORDS = ('experience', 'iskustv', 'erfahrung')
+_MORE_THAN = r'(?:(?:over|more than|almost|nearly|vise od|preko|skoro|uber|mehr als)\s+)?'
+# Words that put the number in the company's own history. The first group
+# may sit anywhere in the 45 characters before the number. The second must
+# lead straight into it, so "we have an opening for an engineer with 5 years
+# of experience" is still read as a requirement.
 _COMPANY_ABOUT_ITSELF = re.compile(
-    r"\b(founded|established|in business|history of|we have|we've|"
-    r"our company|company has|the company)\b")
+    r"\b(?:founded|established|in business|history of|zahvaljujuci|osnovan\w*|"
+    r"posluje\w*|postoji\w*|gegrundet)\b"
+    r"|\b(?:our|nas\w*|unser\w*)\s+(?:\w+\s+)?(?:experience|iskustv\w*|erfahrung)\b"
+    r"|\b(?:we have|we've|we bring|we've got|imamo|wir haben|seit)\s+" + _MORE_THAN + r"$"
+    r"|\b(?:company|group|firm|kompanij\w*|firm\w*|preduzec\w*)\s+"
+    r"(?:has|have|brings?|with|sa|ima|mit|hat)\s+" + _MORE_THAN + r"$")
+# A sentence that opens "With over 10 years of experience," and goes on to
+# name a subject other than the candidate is the company about itself.
+_SELF_OPENING = re.compile(r'^\W*(?:with|sa|mit)\s+' + _MORE_THAN + r'$')
+_NOT_THE_CANDIDATE = re.compile(
+    r'^[^,]*,\s*(?!you\b|your\b|the (?:ideal |right |successful )?candidate|'
+    r'vi\b|ti\b|sie\b|du\b|kandidat)\w')
+_UPPER_LIMIT = re.compile(
+    r'(?:\bup to|\bless than|\bfewer than|\bunder|\bmax(?:imum|imal)?(?:\s+of)?|\bno more than|'
+    r'\bnot more than|\bat most|\bdo|\bnajvise|\bmaksimalno|\bmanje od|\bbis zu|'
+    r'\bhochstens|\bweniger als|<)\s*$')
+# Years of a degree, a contract or a programme, read from the words after
+# the number ("4 year college degree", "4 years of university studies", "5
+# year contract") or before it ("Bachelor's degree (4 years)", "will last
+# between two and four years", "within 3 years").
+_NOT_EXPERIENCE_AFTER = re.compile(
+    r"\s*(?:(?:of\s+)?(?:(?:engineering|technical|university|college|academic|"
+    r"higher|vocational|full[\s-]time)\s+)?(?:college|university|degree|bachelor\w*|"
+    r"undergraduate|diplom\w*|programmes?|programs?|apprenticeships?|course|"
+    r"stud(?:y|ies)|studij\w*|school)\b|(?:contract|warranty|guarantee|fixed[\s-]term)\b)")
+_NOT_EXPERIENCE_BEFORE = re.compile(
+    r"(?:\b(?:degree|diplom\w*|bachelor\w*|stud(?:y|ies)|studij\w*|programmes?|"
+    r"programs?|course|apprenticeship)\s*\(\s*"
+    r"|\b(?:within|after|over the next|in the next|for the next|nakon|u roku od|"
+    r"innerhalb(?: von)?|nach)\s+)$"
+    r"|\b(?:lasts?|lasting|duration|traje\w*|dauer\w*)\b")
 _PREFERRED_MARKERS = (
     'preferred', 'nice to have', 'nice-to-have', 'a plus', 'an advantage',
     'advantageous', 'ideally', 'desirable', 'bonus',
 )
+# The same, in the languages an advert is written in. Shared with the
+# language rule below.
+LANGUAGE_PREFERRED_MARKERS = _PREFERRED_MARKERS + (
+    'preferabl', 'beneficial', 'an asset', 'optional', 'von vorteil',
+    'wunschenswert', 'idealerweise', 'ein plus', 'pluspunkt', 'gerne gesehen',
+    'een pre', 'un atout', 'un plus', 'prednost', 'pozeljn',
+)
+# Matched at the start of a word, so "between previous" is not "een pre".
+_PREFERRED_RE = re.compile(
+    r'\b(?:' + '|'.join(re.escape(m) for m in LANGUAGE_PREFERRED_MARKERS) + r')')
 EXPERIENCE_TIERS = (  # (at least this many years, multiplier)
     (8, 0.75),
     (5, 0.85),
     (3, 0.95),
 )
+# No advert requires more than 15 years. A larger number is the company
+# describing itself in words _COMPANY_ABOUT_ITSELF does not know.
+_MOST_YEARS_REQUIRED = 15
+# An alternative route joined by "or", with no comma or semicolon between
+# the "or" and the second route: "2+ years of experience, or 4+ years",
+# "Bachelor's with 5 years or Master's with 3 years".
+_ROUTE_OR = re.compile(r'\b(?:or|ili|oder|alternatively)\b[^,;]{0,30}$')
+
+
+def _undot(text):
+    """
+    Folded text with the full stops of common abbreviations removed, so a
+    split into sentences does not cut "min. 5 years", "B.Sc. in Electrical"
+    or "Electrical Eng. or Mechanical Eng." apart.
+    """
+    text = re.sub(r'\b([bm])\.\s?(sc|eng|tech)\b\.?', r'\1\2', text)
+    text = re.sub(r'\b([bm])\.([as])\.', r'\1\2', text)
+    text = re.sub(r'\be\.g\.', 'eg', text)
+    text = re.sub(r'\bi\.e\.', 'ie', text)
+    text = re.sub(r'\bz\.\s?b\.', 'zb', text)
+    return re.sub(r'\b(min|max|mind|ca|cca|approx|npr|eng|dipl|ing|incl|inkl|bzw|evtl|'
+                  r'yrs|god)\.', r'\1', text)
 
 
 def _years_value(token):
@@ -1240,29 +1323,78 @@ def _tier_multiplier(years):
     return 1.0
 
 
-def _sentence_around(text, start, end):
-    """The sentence (or line) containing text[start:end]."""
-    left = max(text.rfind('.', 0, start), text.rfind('\n', 0, start))
+def _sentence_bounds(text, start, end):
+    """
+    Start and end of the sentence (or line) containing text[start:end]. A
+    heading line that ends in a colon ("Experience:", "Nice to have:") is
+    read with the line under it.
+    """
+    left = max(text.rfind('.', 0, start), text.rfind('\n', 0, start)) + 1
+    if left > 0 and text[left - 1] == '\n':
+        heading_end = len(text[:left - 1].rstrip())
+        if heading_end and text[heading_end - 1] == ':':
+            left = max(text.rfind('.', 0, heading_end), text.rfind('\n', 0, heading_end)) + 1
     rights = [i for i in (text.find('.', end), text.find('\n', end)) if i != -1]
-    return text[left + 1:min(rights) if rights else len(text)]
+    return left, min(rights) if rights else len(text)
+
+
+def _marked_preferred(text, left, right, start, end):
+    """
+    True when the years at text[start:end] are marked preferred or a plus.
+
+    Read on the part of the sentence between commas or semicolons, so
+    "Minimum 5 years of experience in sales, knowledge of SAP is a plus"
+    still requires the five years. A heading ("Nice to have: ...") marks the
+    whole sentence, and so does a marker that opens the next part ("5 years
+    of experience in sales, preferred").
+    """
+    heading = text[left:right].split(':', 1)
+    if len(heading) == 2 and _PREFERRED_RE.search(heading[0]) and left + len(heading[0]) < start:
+        return True
+    part_left = max(text.rfind(',', left, start), text.rfind(';', left, start), left - 1) + 1
+    stops = [i for i in (text.find(',', end, right), text.find(';', end, right)) if i != -1]
+    part_right = min(stops) if stops else right
+    if _PREFERRED_RE.search(text[part_left:part_right]):
+        return True
+    if part_right < right:
+        following = text[part_right + 1:right]
+        return bool(_PREFERRED_RE.match(following.strip()))
+    return False
+
+
+def _experience_mentions(text: str):
+    """
+    The experience requirements in the text, as (folded text, mentions).
+    Each mention is (years, preferred, start, end, sentence start). A range
+    such as "3-5 years" counts as its lower bound, since that is what the
+    employer accepts.
+    """
+    t = _undot(fold_diacritics(text or ''))
+    mentions = []
+    for m in _YEARS_RE.finditer(t):
+        left, right = _sentence_bounds(t, m.start(), m.end())
+        before = t[max(left, m.start() - 45):m.start()]
+        after = t[m.end():min(right, m.end() + 60)]
+        if not any(word in before or word in after for word in _EXPERIENCE_WORDS):
+            continue
+        if after.lstrip().startswith('ago') or _COMPANY_ABOUT_ITSELF.search(before):
+            continue
+        if _SELF_OPENING.match(t[left:m.start()]) and _NOT_THE_CANDIDATE.match(t[m.end():right]):
+            continue
+        if (_UPPER_LIMIT.search(before) or _NOT_EXPERIENCE_AFTER.match(after)
+                or _NOT_EXPERIENCE_BEFORE.search(before)):
+            continue
+        mentions.append((_years_value(m.group(1)),
+                         _marked_preferred(t, left, right, m.start(), m.end()),
+                         m.start(), m.end(), left))
+    return t, mentions
 
 
 def required_experience(text: str):
     """Return (years, preferred) for the most demanding experience requirement
-    in the text, or (None, False) when there is none. A range such as "3-5
-    years" counts as its lower bound, since that is what the employer accepts."""
-    t = (text or '').lower()
+    in the text, or (None, False) when there is none."""
     best = None  # (multiplier, years, preferred)
-    for m in _YEARS_RE.finditer(t):
-        before = t[max(0, m.start() - 45):m.start()]
-        after = t[m.end():m.end() + 60]
-        if 'experience' not in before and 'experience' not in after:
-            continue
-        if after.lstrip().startswith('ago') or _COMPANY_ABOUT_ITSELF.search(before):
-            continue
-        years = _years_value(m.group(1))
-        sentence = _sentence_around(t, m.start(), m.end())
-        preferred = any(marker in sentence for marker in _PREFERRED_MARKERS)
+    for years, preferred, *_ in _experience_mentions(text)[1]:
         mult = _tier_multiplier(years)
         if preferred:
             mult = 1 - (1 - mult) / 2
@@ -1281,6 +1413,109 @@ def experience_multiplier(job: dict) -> float:
         return 1.0
     mult = _tier_multiplier(years)
     return 1 - (1 - mult) / 2 if preferred else mult
+
+
+def requires_too_many_years(text: str, limit=None) -> bool:
+    """
+    True when the advert requires more years of experience than `limit`.
+
+    limit defaults to Config.MAX_REQUIRED_YEARS, and None never drops. Only a
+    requirement counts: years marked preferred or a plus are skipped. When
+    the same sentence offers a route within the limit, joined by "or" ("2+
+    years of experience, or 4+ years"), the lower route decides.
+    """
+    if limit is None:
+        limit = getattr(Config, 'MAX_REQUIRED_YEARS', None)
+    if limit is None:
+        return False
+    t, mentions = _experience_mentions(text)
+    required = [m for m in mentions if not m[1] and m[0] <= _MOST_YEARS_REQUIRED]
+    for years, _, start, end, left in required:
+        if years <= limit:
+            continue
+        if any(o_left == left and o_years <= limit
+               and _ROUTE_OR.search(t[min(end, o_end):max(start, o_start)])
+               for o_years, _, o_start, o_end, o_left in required):
+            continue
+        return True
+    return False
+
+
+# ── Electrical-only degree ────────────────────────────────────────────────────
+# An advert whose degree requirement names electrical or electronics
+# engineering and nothing a mechanical engineer holds: "BSc/MSc in Electrical
+# / Electronics Engineering", "Diplomirani inzenjer elektrotehnike". The
+# electrical discipline must be the first one named after the degree word, so
+# "degree in engineering and knowledge of electrical systems" is kept.
+#
+# The job is kept when the advert offers an alternative:
+#   - a mechanical engineer named anywhere in the advert ("Mechanical
+#     engineers are also welcome", "masinski fakultet")
+#   - a second discipline or a generic alternative in any sentence that names
+#     a degree ("or Computer Science", "or a related field", "or another
+#     technical discipline", "ili srodne oblasti")
+#   - an electrical degree marked preferred or a plus
+# "Or equivalent" alone is not an alternative, since it means equivalent to
+# the electrical degree.
+_DEGREE_WORD = (r"(?:(?<!\d-)(?<!\d )degree|bachelor\w*|master(?:'|\u2019)?s\b|"
+                r"master\s+(?:degree|of|in)\b|bsc|msc|beng|meng|(?:bs|ms)(?=\s+in\b)|"
+                r"diplom\w*|graduate|studium|studij\w*)")
+_ELECTRICAL = r'(?:electrical|electronics?|electrotechn\w*|elektro\w*|elektrotehn\w*)'
+_DEGREE_FILLER = (r'(?:in|of|from|iz|the|a|an|school|faculty|engineering|engineer|'
+                  r'inzenjer\w*|ingenieur\w*|fakultet\w*|or|and|/|bsc|msc|science|'
+                  r'sciences|applied|der|des|power|\(\w+\))')
+_ELECTRICAL_DEGREE = re.compile(
+    rf'\b{_DEGREE_WORD}(?:[\s/:,(-]+{_DEGREE_FILLER}){{0,5}}[\s/:,(-]+{_ELECTRICAL}\b'
+    rf'|\b{_ELECTRICAL}\s+(?:engineering\s+)?(?:fakultet\w*|faculty|degree|diplom\w*|studium)\b')
+# A sentence that names a degree in any form, for the alternative check.
+_DEGREE_LINE = re.compile(
+    r'\b(?:degree|bachelor\w*|master\w*|bsc|msc|beng|meng|diplom\w*|graduate|studium|'
+    r'studij\w*|fakultet\w*|faculty|qualification|stepen|sprem\w*|obrazovanj\w*)')
+# A second discipline is named as a field of study ("Computer Science",
+# "Process Engineering"), so "computer skills" or "the chemical industry" in
+# the same sentence is not read as an alternative.
+_OTHER_DISCIPLINE = re.compile(
+    r'mechanic\w*|mechatronic\w*|meh?atronik\w*|masin\w*|strojars\w*|maschinenbau|'
+    r'related|similar|srodn\w*|slicn\w*|any engineering|technical field|'
+    r'\b(?:other|another|comparable|vergleichbar\w*|drug(?:i|e|a|ih|om)|'
+    r'(?:process|chemical|industrial|energy|computer|software|civil|production)\s+'
+    r'(?:engineering|science|technology)|chemistry|physics|fizik\w*|'
+    r'informati(?:cs|ka|k|on technology|on systems)|racunarstv\w*|'
+    r'(?:hemijsk|tehnolosk|racunarsk|gradjevinsk)\w*\s+(?:fakultet\w*|inzenjer\w*|nauk\w*)|'
+    r'tehnick\w* (?:smer\w*|fakultet\w*|nauk\w*))\b')
+_MECHANICAL_NAMED = re.compile(
+    r'\b(?:mechanical|mechatronics?)\s+engineer(?:s|ing)?\b|\bmasinstv\w*|'
+    r'\bmasinsk\w*\s+(?:fakultet\w*|inzenjer\w*)|\bstrojarstv\w*|\bmaschinenbau\w*')
+
+
+def requires_electrical_degree(text: str) -> bool:
+    """
+    True when a degree requirement names only electrical or electronics
+    engineering. Off unless Config.DROP_ELECTRICAL_ONLY_DEGREE is set.
+    """
+    if not getattr(Config, 'DROP_ELECTRICAL_ONLY_DEGREE', False) or not text:
+        return False
+    t = _undot(fold_diacritics(text))
+    if _MECHANICAL_NAMED.search(t):
+        return False
+    if any(_DEGREE_LINE.search(clause) and _OTHER_DISCIPLINE.search(clause)
+           for clause in _CLAUSE_SPLIT.split(t)):
+        return False
+    # _clauses leaves out the parts of a sentence marked preferred or a plus.
+    return any(_ELECTRICAL_DEGREE.search(clause) for clause in _clauses(t))
+
+
+def content_drop_reason(title: str, description: str):
+    """
+    The reason the advert text rules a job out on years or degree, as the
+    filter's reason name, or None. Shared by the filter and the digest's
+    recheck of stored rows.
+    """
+    if requires_too_many_years(description):
+        return 'experience_required'
+    if requires_electrical_degree(description):
+        return 'electrical_degree'
+    return None
 
 
 # ── Required languages ────────────────────────────────────────────────────────
@@ -1323,6 +1558,9 @@ _HIGH_BEFORE = (
     r'(?<!basic )(?<!elementary )(?<!limited )(?<!some )(?<!intermediate )'
     r'proficien(?:t|cy)|'
     r'fluen(?:t|cy|tly)|(?<!non-)(?<!non )native|mother tongue|excellent\w*|'
+    # The noun only before a level word, "Excellence knowledge of Dutch", so
+    # "operational excellence in Dutch operations" is not a requirement.
+    r'excellence(?=\s+(?:knowledge|command|skills?|proficiency|level))|'
     r'perfect|very good|(?<!bis )sehr gut\w*|verhandlungssicher\w*|'
     r'flie(?:ss|ß)end\w*|ausgezeichnet\w*|exzellent\w*|hervorragend\w*|'
     r'muttersprachlich\w*|perfekt\w*|vloeiend\w*|uitstekend\w*|maitrise|'
@@ -1365,11 +1603,6 @@ _HIGH_AFTER = (
     r'fluen(?:t|cy|tly)\b|c[12]\b|native|mother tongue|verhandlungssicher\w*|'
     r'flie(?:ss|ß)end\w*|muttersprach\w*|courant|moedertaal\w*|vloeiend\w*|'
     r'excellent\w*|perfe(?:ct|kt)\w*|sehr gut\w*|tec(?:no|nim|an|na)\w*|odlicn\w*')
-LANGUAGE_PREFERRED_MARKERS = _PREFERRED_MARKERS + (
-    'preferabl', 'beneficial', 'an asset', 'optional', 'von vorteil',
-    'wunschenswert', 'idealerweise', 'ein plus', 'pluspunkt', 'gerne gesehen',
-    'een pre', 'un atout', 'un plus', 'prednost', 'pozeljn',
-)
 _CLAUSE_SPLIT = re.compile('[.\n\r;|!?•·●▪]+')
 # Abbreviations whose full stop would split "Deutschkenntnisse (mind. C1)".
 _ABBREVIATION_DOT = re.compile(r'\b(mind|min|bzw|ca|evtl|inkl)\.')
@@ -1932,7 +2165,10 @@ class JobFilter:
             'non_english': 0,
             'language_required': 0,
             'advert_language': 0,
+            'experience_required': 0,
+            'electrical_degree': 0,
             'below_min_score': 0,
+            'same_posting': 0,
         }
 
         for job in jobs:
@@ -2010,6 +2246,14 @@ class JobFilter:
                     rejected['advert_language'] += 1
                     continue
 
+                # Too many years required, or a degree only an electrical
+                # engineer holds. Both off unless set in .env.
+                content_reason = content_drop_reason(title, description)
+                if content_reason:
+                    logger.debug(f"{content_reason}: {title} @ {company}")
+                    rejected[content_reason] += 1
+                    continue
+
             score, best_cv = self.score_job_with_cv(title, description, company)
 
             # Entry-level software from the home-market board skips the score
@@ -2055,6 +2299,20 @@ class JobFilter:
             scored_jobs.append(job)
 
         scored_jobs.sort(key=lambda x: x['relevance_score'], reverse=True)
+
+        # One posting published in two languages arrives as two adverts with
+        # different links and titles but the same posting number. Compared
+        # only among the jobs that passed, best score first, so the copy kept
+        # is the best one the candidate can read, whichever arrived first.
+        # A hand-saved job is never dropped here.
+        same = {i for i in find_same_postings(scored_jobs)
+                if scored_jobs[i].get('source') not in ALWAYS_INCLUDE_SOURCES}
+        if same:
+            for i in sorted(same):
+                logger.debug(f"Same posting: {scored_jobs[i].get('title')} "
+                             f"@ {scored_jobs[i].get('company')}")
+            rejected['same_posting'] = len(same)
+            scored_jobs = [job for i, job in enumerate(scored_jobs) if i not in same]
 
         # Kept on the instance so a caller or a test can read the breakdown.
         self.last_rejected = rejected
