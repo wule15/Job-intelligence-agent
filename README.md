@@ -244,7 +244,7 @@ Only what is in the code.
 
 **Refuses internal addresses when checking links.** Before a scraped apply link is fetched to see if it is still live, its target is checked, and a private, loopback or cloud-metadata address is refused, on every redirect hop. A stranger's listing cannot point the link checker at the local network.
 
-**Generates cover letters by hand.** `write_cover_letters.py` drafts letters through the Claude API for the best-scoring stored jobs, three by default, and saves them as DOCX. It is not part of the scheduled run.
+**Generates cover letters by hand.** `write_cover_letters.py` drafts letters through the Claude API for the best-scoring stored jobs, three by default, and saves them as DOCX. Each letter is filed under its job's id in the database, and a job that already has a letter is skipped. It is not part of the scheduled run.
 
 **Tracks applications.** `gmail_application_tracker.py`, run by hand, scans the main Gmail inbox and an optional second one over IMAP for confirmation and rejection emails from the last 90 days. Each email is matched to a stored job by exact title and company, ignoring case. When no stored job matches, it creates a new row. It opens the inbox read-write, because it tags every email it matches with a Gmail label, Job Applications. It has no tests.
 
@@ -344,7 +344,7 @@ Python 3.10 or newer: the code uses 3.10 syntax, and the pinned `ddgs` release r
 | Tests | pytest |
 | Normalisation | standard library only, `re` and `urllib.parse` |
 
-1003 tests, covering scoring, filtering, title rules, work eligibility, language rules, deduplication, storage, the send history, the pre-send liveness check, source health, digest composition and volume, the scam screen, the SSRF guard on link checking, retry policy, local-language scoring and three regressions that each cost real results. Tests run against fixtures and temporary files, and no test makes a network call.
+1062 tests, covering scoring, filtering, title rules, work eligibility, language rules, deduplication, storage, the send history, the pre-send liveness check, source health, digest composition and volume, the scam screen, the SSRF guard on link checking, retry policy, local-language scoring and three regressions that each cost real results. Tests run against fixtures and temporary files, and no test makes a network call.
 
 One file, `tests/test_end_to_end.py`, runs a whole day through the real pipeline in order: search, dedup, description fetch, scoring, storage, digest selection and sending. Every network call is replaced: fake job boards (one of which crashes), a fixed advert page for the description fetch, a link check that always answers "live", a temporary database, and Telegram's HTTP call captured instead of sent. It then checks what would have reached the chat: the strong match is there once, the weak match and the dealbreaker are not, the local-language advert lands in the regional message, the crashing source is named, nothing repeats the next day, a job reposted under a new link after the cleanup is not sent again, every sent job is logged with its full link, and a failed send goes out the next day. The duplicate check tests three dedup layers together, so switching off one layer does not fail it.
 
@@ -418,14 +418,14 @@ Or point `MASTER_CV_PATH` in `core/.env` at another file. Fill in the `variants:
 
 ```bash
 pip install -r requirements-dev.txt
-python -m pytest              # 1003 tests, no network
+python -m pytest              # 1062 tests, no network
 python job_search_smart.py    # one real run: search, score, store
 python telegram_sender.py     # send the digest
 ```
 
 A run prints a per-source table. If one source is producing everything, that is worth knowing on day one.
 
-`validate_system.py` is an older end-to-end smoke test: one live search, then three cover letters through the Claude API. It costs API calls and is not needed.
+`validate_system.py` is an older end-to-end smoke test: one live search, then up to three cover letters through the Claude API, written and recorded the same way as `write_cover_letters.py`. It costs API calls and is not needed.
 
 **6. Schedule it.**
 
@@ -450,7 +450,7 @@ python write_cover_letters.py --limit 5    # default is 3
 
 Drafts DOCX cover letters through the Claude API. This is a manual path, not part of the scheduled run, and it sends no email. Letters land in `core/output/docx cover letters/`, which is gitignored, and you review them before they go anywhere. If Telegram is set up, it sends one message saying how many were written.
 
-The default reads what the scheduled run already stored and skips any job that already has a letter, so running it twice does not pay for the same letter twice. Each letter is one API call, which is why the count is capped.
+Both ways file each letter under the id of the job's row in the database and skip any job that already has a letter, so running it twice does not pay for the same letter twice. A search result is matched to its stored row by title and company, never by an id the board sent. The letter is recorded before the file is saved, so a failed save does not lead to a second paid call. Each letter is one API call, which is why the count is capped.
 
 **8. Optional dashboard.**
 
@@ -469,7 +469,7 @@ It lists every stored job, each with its relevance score, source, detected indus
 - **Filter** by minimum score, source, date, industry, origin (email or search), and which inbox the job came from.
 - **Track applications.** Mark any job `applied`, `interviewing`, or `rejected`. The status persists and the header keeps a running count.
 - **Search Gmail for the source email.** Jobs created by the application tracker open a Gmail search for the company and title in the inbox they came from.
-- **Export to CSV**, pull up similar jobs (which also shows the CV that scored each one), or delete a dead link, inline.
+- **Export to CSV**, pull up similar jobs (which also shows the CV that scored each one), or delete a dead link, inline. Deleting a job deletes its letter record too, because SQLite can give the freed id to the next new job.
 
 A `/stats` endpoint returns the job count, source count, and average and top score as JSON.
 
@@ -488,7 +488,9 @@ The container does what the scheduled task does on the host: one search, then th
 
 Credentials arrive at runtime through `--env-file`. The database, the company list and the CV file stay on the host and are mounted, the last two read-only. None of them is ever copied into the image. The paths sit under `core/` because `core/config.py` resolves everything relative to itself.
 
-That is the job of `.dockerignore`. Excluding a file from a build context is not the same as excluding it from git. A build context is copied wholesale before the first instruction runs, and anything it carries into a layer stays in that layer even if a later step deletes it. So `.env` files, credentials, databases, the CV and the company list are kept out at the boundary rather than cleaned up afterwards, because afterwards is too late. The patterns for those are written with `**/`, because a plain `.env` pattern only matches at the top of the build context and would let `core/.env` through.
+That is the job of `.dockerignore`. Excluding a file from a build context is not the same as excluding it from git. A build context is copied wholesale before the first instruction runs, and anything it carries into a layer stays in that layer even if a later step deletes it. So private files are kept out at the boundary rather than cleaned up afterwards, because afterwards is too late.
+
+The file is an allow-list. Everything is left out, then the code the agent runs is brought back: the top-level `.py` files, `core/`, `sources/`, `templates/` and `requirements.txt`. A deployment folder holds more than the repository, such as backups, notes and logs, and a list of things to leave out misses whatever nobody named. Inside the folders brought back, `.env` files, keys, the data, config, log and output folders, and every JSON, YAML, text, database, PDF and Word file are left out again. Those patterns start with `**/`, because a plain `.env` pattern only matches at the top of the build context and would let `core/.env` through. A new folder of code must be added to the list, and forgetting it fails at start-up with a missing module. A test reads the rules the way Docker does and checks that a list of private paths stays out and every code file goes in. Docker itself is not run by the tests.
 
 Under `--env-file`, a blank line such as `SERPAPI_BUDGET=` arrives as an empty value rather than a missing one. For `SERPAPI_BUDGET`, `JSEARCH_BUDGET` or `NON_EUROPE_PREFERENCE` that stops the run at start-up, so keep a number there or delete the line. A blank `MASTER_CV_PATH` leaves the run with no CV, so set it or leave it out. On the host a blank value falls back to the default.
 

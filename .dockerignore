@@ -2,53 +2,61 @@
 # an image layer. This matters more than .gitignore does: a file deleted in a
 # later build step is still recoverable from the layer that added it.
 #
-# A pattern matches from the context root only, so each one that could also
-# sit in a subfolder, core/ above all, is written with **/.
+# This is an allow-list. Everything is left out, then the code the agent runs
+# is brought back by name. The folder this is built from holds more than the
+# repository does: a live deployment keeps backups, git bundles, notes and
+# logs beside the code, and a list of things to leave out misses whatever
+# nobody thought to name. A new folder of code has to be added below, and
+# forgetting it fails loudly, as a missing module at start-up.
+
+*
+
+# The code the agent runs
+!*.py
+!core
+!sources
+!templates
+!requirements.txt
+
+# Private files that can sit inside the folders brought back above. Each
+# pattern starts with **/ so it matches at any depth: a plain .env would
+# match only at the top and let core/.env through.
 
 # Secrets
 **/.env
 **/.env.*
-!.env.example
 **/*.bak*
-**/credentials.json
-**/token.json
-**/client_secret*.json
 **/*.pem
 **/*.p12
 **/*.key
-git.txt
-**/*token*.txt
 **/*.token
 
-# Runtime and personal data. This project runs against one person's real job
-# search, CV and company list. They are mounted at run time instead.
-**/data/
+# Runtime and personal data. The database, the CV and the company list are
+# mounted at run time instead. The code reads no data file of these types
+# from inside the image, so every one of them is left out.
+**/data
+**/logs
+**/output
+**/cache
+**/config
+**/resumes
+**/linkedin profile
+**/*.json
+**/*.yaml
+**/*.yml
+**/*.txt
+**/*.log
 **/*.db
-**/*.db-wal
-**/*.db-shm
-**/*.sqlite3
-**/logs/
-**/output/
-**/cache/
-local/
-**/master-cv.yaml
-**/companies.json
-
-# Version control. Also keeps the image from carrying the whole history.
-.git/
-.gitignore
-.github/
+**/*.db-*
+**/*.sqlite*
+**/*.pdf
+**/*.docx
+**/*.bundle
 
 # Local tooling and build noise
-**/__pycache__/
+**/__pycache__
 **/*.pyc
-.pytest_cache/
-.venv/
-venv/
-*.egg-info/
 
-# Not needed at runtime
-tests/
-docs/
-requirements-dev.txt
-README.md
+# requirements.txt is a .txt file, so it is brought back once more after the
+# rule above that leaves out every .txt.
+!requirements.txt

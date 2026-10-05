@@ -240,28 +240,3 @@ End with "Best regards,\\n{Config.CANDIDATE_NAME}". Do not add extra commentary.
             *signature,
         ])
         return formatted.strip()
-
-
-if __name__ == '__main__':
-    generator = CoverLetterGenerator()
-
-    # Test
-    test_job = {
-        'title': 'Senior Python Developer',
-        'company': 'TechCorp',
-        'description': 'We are looking for an experienced Python developer with expertise in Django and PostgreSQL for a fully remote role.'
-    }
-
-    letter = generator.generate_cover_letter(
-        test_job['title'],
-        test_job['company'],
-        test_job['description']
-    )
-
-    if letter:
-        formatted = generator.format_cover_letter(
-            test_job['title'],
-            test_job['company'],
-            letter
-        )
-        print(formatted)

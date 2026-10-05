@@ -12,9 +12,6 @@ apify-client>=1.7.0
 # Master CV, the single source of truth the scorer reads its variants from
 PyYAML>=6.0
 
-# CV parsing, the fallback skill extractor for setups without a master CV
-pdfplumber==0.10.0
-
 # Cover letter generation
 anthropic>=0.89.0
 python-docx==1.2.0

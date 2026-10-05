@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>NV Job Dashboard</title>
+    <title>Job Dashboard</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet">
@@ -143,14 +143,13 @@
 
         select option { background: #1a1030; color: #e2e2e8; }
 
-        /* NV Logo */
-        .nv-logo {
+        /* Sidebar mark: an icon, so the page carries no one's name */
+        .app-mark {
             background: linear-gradient(135deg, #7c3aed, #4c1d95);
             width: 40px; height: 40px;
             border-radius: 10px;
             display: flex; align-items: center; justify-content: center;
-            font-weight: 900; font-size: 1rem; color: white;
-            letter-spacing: -1px;
+            font-size: 1.05rem; color: white;
             box-shadow: 0 4px 15px rgba(124, 58, 237, 0.5);
         }
 
@@ -292,9 +291,9 @@
         <!-- Sidebar -->
         <div class="sidebar hidden md:flex flex-col w-60 flex-shrink-0">
 
-            <!-- NV Logo + Title -->
+            <!-- Mark + Title -->
             <div class="flex items-center gap-3 px-5 py-6 border-b border-purple-900/30">
-                <div class="nv-logo">NV</div>
+                <div class="app-mark" aria-hidden="true"><i class="fa-solid fa-briefcase"></i></div>
                 <div>
                     <h1 class="font-bold text-white text-base leading-tight">Job Digest</h1>
                     <p class="text-purple-400 text-xs">Daily Remote Jobs</p>

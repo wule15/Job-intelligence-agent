@@ -330,6 +330,30 @@ class Database:
         cursor.execute(f'SELECT * FROM jobs ORDER BY {order_by} LIMIT ?', (limit,))
         return cursor.fetchall()
 
+    def job_exists(self, job_id):
+        """True when job_id is the id of a stored job."""
+        if job_id is None:
+            return False
+        cursor = self.connection.cursor()
+        cursor.execute('SELECT 1 FROM jobs WHERE id = ?', (job_id,))
+        return cursor.fetchone() is not None
+
+    def find_job_id(self, job_title, company):
+        """
+        The stored id of a job, looked up the way add_job stores it, or None.
+
+        Search results carry no database id, and some boards put their own
+        posting id in the same field. This is how a search result is matched
+        to its row.
+        """
+        if not job_title or not company:
+            return None
+        cursor = self.connection.cursor()
+        cursor.execute('SELECT id FROM jobs WHERE dedup_key = ?',
+                       (dedup_key(job_title, company),))
+        row = cursor.fetchone()
+        return row[0] if row else None
+
     def job_has_cover_letter(self, job_id):
         """Check if job already has a cover letter generated."""
         cursor = self.connection.cursor()

@@ -1,14 +1,19 @@
 """
 Complete system validation.
-Tests: job search → cover letter generation → output files.
+Tests: job search, then cover letters for the top results, saved as DOCX.
+
+The letters go through the same code as write_cover_letters.py: each one is
+filed under its stored job id, and a job that already has a letter is
+skipped, so a second run does not pay for the same letters again.
 """
 
 import sys
-from pathlib import Path
 from job_search_smart import SmartJobSearcher
 from core.cover_letter_generator import CoverLetterGenerator
 from core.config import Config
+from core.database import Database
 from core.utils import setup_logging
+from write_cover_letters import letter_jobs_from_results, write_letter
 
 logger = setup_logging('validate_system')
 
@@ -35,86 +40,38 @@ def main():
         for i, job in enumerate(jobs[:3], 1):
             print(f"  {i}. {job['title']} @ {job['company']} ({job['relevance_score']}%)")
 
-        # Step 2: Generate cover letters
-        print("\n[STEP 2] Generating cover letters for top 3 jobs...")
+        # Step 2: Cover letters for the top jobs that have none yet
+        print("\n[STEP 2] Writing cover letters for up to 3 top jobs...")
         print("-" * 70)
 
-        generator = CoverLetterGenerator()
-        cover_letters = []
+        with Database() as db:
+            to_write = letter_jobs_from_results(db, jobs, 3)
+            if not to_write:
+                print("[✓] Every job found already has a letter. Nothing to pay for.")
 
-        for i, job in enumerate(jobs[:3], 1):
-            print(f"[*] Generating letter {i}/3: {job['title']} @ {job['company']}")
+            generator = CoverLetterGenerator() if to_write else None
+            saved_files = []
+            for i, job in enumerate(to_write, 1):
+                print(f"[*] Letter {i}/{len(to_write)}: {job['title']} @ {job['company']}")
+                filepath = write_letter(generator, db, job)
+                if filepath:
+                    saved_files.append(filepath)
+                    print(f"    [✓] Saved: {filepath.name}")
+                else:
+                    print("    [-] No letter written")
 
-            letter = generator.generate_cover_letter(
-                job.get('title'),
-                job.get('company'),
-                job.get('description')
-            )
-
-            if letter:
-                formatted = generator.format_cover_letter(
-                    job.get('title'),
-                    job.get('company'),
-                    letter
-                )
-
-                cover_letters.append({
-                    'job_title': job.get('title'),
-                    'company': job.get('company'),
-                    'letter': formatted,
-                    'salary': job.get('salary', 'N/A')
-                })
-
-                print(f"    [✓] Generated ({len(letter)} chars)")
-            else:
-                print(f"    [-] Failed to generate")
-
-        if not cover_letters:
-            print("[-] No cover letters generated. Validation FAILED")
+        if to_write and not saved_files:
+            print("[-] No cover letters written. Validation FAILED")
             return 1
 
-        print(f"\n[✓] Generated {len(cover_letters)} cover letters")
-
-        # Step 3: Save to files
-        print("\n[STEP 3] Saving cover letters to output folder...")
-        print("-" * 70)
-
-        output_dir = Config.OUTPUT_DIR
-        output_dir.mkdir(exist_ok=True)
-
-        saved_files = []
-        for cl in cover_letters:
-            filename = f"CoverLetter_{cl['company'].replace(' ', '_')}_{cl['job_title'].replace(' ', '_')[:20]}.txt"
-            filepath = output_dir / filename
-
-            try:
-                with open(filepath, 'w', encoding='utf-8') as f:
-                    f.write(cl['letter'])
-                saved_files.append(filepath)
-                print(f"[✓] Saved: {filename}")
-            except Exception as e:
-                print(f"[-] Error saving {filename}: {e}")
-
-        if not saved_files:
-            print("[-] No files saved. Validation FAILED")
-            return 1
-
-        # Step 4: Final report
+        # Step 3: Final report
         print("\n" + "="*70)
         print("VALIDATION COMPLETE ✓")
         print("="*70)
 
         print(f"\n[✓] Jobs found: {len(jobs)}")
-        print(f"[✓] Cover letters generated: {len(cover_letters)}")
-        print(f"[✓] Files saved: {len(saved_files)}")
+        print(f"[✓] Cover letters written: {len(saved_files)}")
         print(f"\n[✓] Output directory: {Config.OUTPUT_DIR}")
-
-        print("\n" + "="*70)
-        print("SYSTEM READY FOR DAILY AUTOMATION")
-        print("="*70)
-
-        print("\nTo run daily at 9 AM, execute:")
-        print("  powershell -ExecutionPolicy Bypass -File setup_scheduler.ps1")
 
         print("\nTo run manually anytime:")
         print("  python job_search_smart.py")

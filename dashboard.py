@@ -424,6 +424,10 @@ def delete_job():
     try:
         conn = get_db()
         conn.execute('DELETE FROM jobs WHERE id = ?', (job_id,))
+        # The letter record goes too. SQLite gives the highest freed id to the
+        # next new job, and a record left behind would then mark that job as
+        # having a letter it never had, so it would never get one.
+        conn.execute('DELETE FROM cover_letters_sent WHERE job_id = ?', (job_id,))
         conn.commit()
         conn.close()
         return jsonify({'success': True})
