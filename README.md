@@ -344,7 +344,7 @@ Python 3.10 or newer: the code uses 3.10 syntax, and the pinned `ddgs` release r
 | Tests | pytest |
 | Normalisation | standard library only, `re` and `urllib.parse` |
 
-1062 tests, covering scoring, filtering, title rules, work eligibility, language rules, deduplication, storage, the send history, the pre-send liveness check, source health, digest composition and volume, the scam screen, the SSRF guard on link checking, retry policy, local-language scoring and three regressions that each cost real results. Tests run against fixtures and temporary files, and no test makes a network call.
+1103 tests, covering scoring, filtering, title rules, work eligibility, language rules, deduplication, storage, the send history, the pre-send liveness check, source health, digest composition and volume, the scam screen, the SSRF guard on link checking, retry policy, the Cloud Run wrapper, local-language scoring and three regressions that each cost real results. Tests run against fixtures and temporary files, and no test makes a network call.
 
 One file, `tests/test_end_to_end.py`, runs a whole day through the real pipeline in order: search, dedup, description fetch, scoring, storage, digest selection and sending. Every network call is replaced: fake job boards (one of which crashes), a fixed advert page for the description fetch, a link check that always answers "live", a temporary database, and Telegram's HTTP call captured instead of sent. It then checks what would have reached the chat: the strong match is there once, the weak match and the dealbreaker are not, the local-language advert lands in the regional message, the crashing source is named, nothing repeats the next day, a job reposted under a new link after the cleanup is not sent again, every sent job is logged with its full link, and a failed send goes out the next day. The duplicate check tests three dedup layers together, so switching off one layer does not fail it.
 
@@ -418,7 +418,7 @@ Or point `MASTER_CV_PATH` in `core/.env` at another file. Fill in the `variants:
 
 ```bash
 pip install -r requirements-dev.txt
-python -m pytest              # 1062 tests, no network
+python -m pytest              # 1103 tests, no network
 python job_search_smart.py    # one real run: search, score, store
 python telegram_sender.py     # send the digest
 ```
@@ -497,6 +497,35 @@ Under `--env-file`, a blank line such as `SERPAPI_BUDGET=` arrives as an empty v
 `TZ` sets the clock the log and digest timestamps use, for example `TZ=Europe/Berlin`. The POSIX rule in the command above, Central European time with summer time, works too. Without it the container runs on UTC.
 
 The image pins Python 3.12 rather than tracking latest, so a new release cannot change the behaviour of a scheduled run without anyone touching the code, and it runs as a non-root user with a fixed uid so a volume written inside the container stays readable on the host.
+
+---
+
+## Running on Google Cloud Run
+
+The same image can run the daily digest as a Cloud Run job in `europe-west1`, with `python cloud_run_job.py` as its command. The image's default command is unchanged, so the Docker run above still works.
+
+What runs where:
+
+- **The Cloud Run job** runs `cloud_run_job.py` once per execution. It downloads the database, runs the search and the send as the PC does, and uploads the database again. One task, a 30-minute timeout and no automatic retries, because a retry after the send would send the digest twice. The script refuses to run as a retry.
+- **A private Cloud Storage bucket** holds the database between runs, as one object such as `db/job_digest.db`.
+- **Secret Manager** holds the `.env` file, the CV file, the company list and the optional exclusion list. Each is mounted as a file in its own folder, and job variables give the paths: `ENV_FILE_PATH`, `CV_FILE_PATH`, `COMPANIES_FILE_PATH`, `EXCLUDE_FILE_PATH`. `BUCKET` and `DB_OBJECT` name the database. A variable set on the job wins over the same key in the mounted `.env`.
+- **The PC** stays the fallback. Its scheduled task and its own database are untouched. The two databases do not sync, so a run on one side does not know what the other side sent. Copy the database across before switching.
+
+The script never starts from an empty or damaged database. It stops if the object is missing, if the download does not match its MD5, or if `PRAGMA quick_check` fails. It saves only if the object is still the version it downloaded, so two runs cannot overwrite each other, and the losing copy goes to `conflicts/`. Any failure sends one line to Telegram saying what failed and whether a re-run is safe. The exit codes are listed at the top of `cloud_run_job.py`. The tests run it against an in-memory fake of Cloud Storage, the metadata server and Telegram, so they show the logic, not a working deployment.
+
+Deploys are run by hand. Nothing in this repository creates the bucket, the secrets, the job or its schedule, and there is no CI. With placeholders:
+
+```bash
+gcloud run jobs deploy JOB_NAME --region=europe-west1 --image=IMAGE_URL \
+  --command=python --args=cloud_run_job.py \
+  --task-timeout=30m --max-retries=0 --service-account=SERVICE_ACCOUNT \
+  --set-env-vars=BUCKET=BUCKET_NAME,DB_OBJECT=db/job_digest.db,ENV_FILE_PATH=/secrets/env/agent.env,CV_FILE_PATH=/secrets/cv/master-cv.yaml,COMPANIES_FILE_PATH=/secrets/companies/companies.json \
+  --set-secrets=/secrets/env/agent.env=ENV_SECRET:latest,/secrets/cv/master-cv.yaml=CV_SECRET:latest,/secrets/companies/companies.json=COMPANIES_SECRET:latest
+```
+
+The service account needs read and write access to objects in the bucket and access to the secrets. Seed the bucket once with a copy of the PC's database taken while nothing has it open. Upload it as a single file: a composite object has no MD5, and the job refuses it. `gcloud storage cp` makes a composite upload for files over 150 MiB unless `storage/parallel_composite_upload_enabled` is set to `False`.
+
+A shadow run is a second job with `DB_OBJECT=shadow/job_digest.db` and `DIGEST_LABEL=[SHADOW]`. It works on its own copy of the database and its messages are marked.
 
 ---
 
