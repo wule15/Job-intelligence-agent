@@ -63,7 +63,7 @@ def _normalise(raw_jobs, fallback_location='Remote'):
         jobs.append({
             'title':       item.get('title', ''),
             'company':     item.get('company_name', ''),
-            'description': desc[:2000],
+            'description': desc[:8000],  # requirements come last, see free_boards
             'link':        apply_link,
             'salary':      salary,
             'location':    item.get('location', fallback_location),

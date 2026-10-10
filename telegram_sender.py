@@ -78,6 +78,10 @@ EXPIRED_PAGE_MARKERS = (
     'position has been filled', 'this position is no longer',
     'posting is no longer active', 'job is no longer available',
     'this job is no longer', 'nicht mehr verfügbar',
+    # SAP SuccessFactors career sites: "You can't view this job because it's
+    # not available at this time." Matched without the apostrophe, which a
+    # page may write as ' or &#39;.
+    'view this job because it',
 )
 
 # Liveness is checked when a job is chosen for a digest, not when it was

@@ -38,6 +38,7 @@ class JobValidator:
         'this job is closed', 'application closed', 'vacancy closed',
         'role has been filled', 'position filled', 'job removed',
         'sorry, this job', 'this job posting has been removed',
+        'view this job because it',  # SuccessFactors closed page
     ]
 
     def check_link_active(self, url, timeout=8):

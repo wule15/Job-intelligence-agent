@@ -67,10 +67,15 @@ def is_dealbreaker(job_title: str, job_description: str) -> bool:
 # manager screens on it. "Manager" is deliberately absent: sales, account and
 # project manager roles are wanted. "Lead" as in "lead generation" or "lead
 # qualification" is the entry sales track, not seniority, so it is let through.
-# "Staff development" is a graduate scheme, not a staff-level role.
+# "Staff development" is a graduate scheme, not a staff-level role. Account
+# roles named for the size of the customer ("Major Account Executive",
+# "Strategic Account Manager", "Enterprise Account Executive") are the senior
+# rungs of a software sales ladder, so they count as senior; a plain or key
+# account manager does not.
 SENIOR_LEVEL_PATTERN = re.compile(
     r'\b(?:senior|snr|sr|staff(?![\s-]+development)|principal|chief|directors?|svp|evp|avp|vp|'
     r'vice[- ]president|head of|team[- ]leaders?|'
+    r'(?:major|strategic|enterprise|named)[\s-]+accounts?[\s-]+(?:executives?|managers?)|'
     r'lead(?![\s-]+(?:(?:generation|gen|qualification)\b|development rep)))\b')
 
 
@@ -1226,7 +1231,9 @@ _IN_BRACKETS = r'(?:\s*\(\d{1,2}\))?'
 _OR_MORE = r'(?:\s+(?:or|and|i|ili|oder|und)\s+(?:more|above|vise|preko|mehr))?'
 # "3-5", "3 to 5", "3 do 5", "between 3 and 5", "3 bis 5". The en dash, em
 # dash and minus sign count as a hyphen.
-_RANGE_SEP = r'(?:\s*[-\u2013\u2014\u2212]\s*|\s+(?:to|or|and|do|ili|i|bis)\s+)'
+# Any dash between the two numbers. A non-breaking hyphen (U+2011) used to be
+# missed, so "3\u20117 years" read as 7 years and dropped a job asking for 3.
+_RANGE_SEP = r'(?:\s*[-\u2010-\u2015\u2212\ufe63\uff0d]\s*|\s+(?:to|or|and|do|ili|i|bis)\s+)'
 _YEARS_RE = re.compile(
     r'(?<![\d.,])\b' + _NUM + _IN_BRACKETS + r'\s*(?:\+|plus)?' + _OR_MORE
     + r'(?:' + _RANGE_SEP + _NUM + _IN_BRACKETS + r'\s*\+?)?'
@@ -1569,7 +1576,7 @@ _HIGH_BEFORE = (
 # Words that may sit between the level and the language: "excellent command of
 # the German language", "excellent written and spoken German".
 _LEVEL_FILLER = (
-    r'(?:in|of|the|a|an|and|written|spoken|oral|verbal|command|knowledge|skills?|'
+    r'(?:in|of|the|a|an|and|written|spoken|oral|verbal|communication|command|knowledge|skills?|'
     r'proficiency|language|level|speaker|znanje|znanjem|poznavanje|kenntnisse|'
     r'sprachkenntnisse|jezik\w*|sprache|beheersing|van|het|de|du|la|u)')
 # A list before the language: "fluent in English and German".

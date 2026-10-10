@@ -45,11 +45,31 @@ def _get(url, params=None):
 
 # ── normaliser ────────────────────────────────────────────────────────────────
 
+# Advert text kept per job. It was 2000 characters of raw HTML, and adverts
+# put their requirements last, so the years, language and degree rules never
+# saw them: a "5+ years" line sat past the cut. Tags are removed first so the
+# cap counts words, not markup.
+DESCRIPTION_MAX_CHARS = 8000
+_TAG = re.compile(r'<[^>]+>')
+
+
+def clean_description(text):
+    """Advert text without HTML tags or entities, capped at DESCRIPTION_MAX_CHARS."""
+    import html
+    text = text or ''
+    if '<' in text:
+        text = _TAG.sub('\n', text)
+    text = html.unescape(text)
+    text = re.sub(r'[ \t\f\v]+', ' ', text)
+    text = re.sub(r'\s*\n\s*', '\n', text)
+    return text.strip()[:DESCRIPTION_MAX_CHARS]
+
+
 def _job(title, company, description, link, salary=None, location='Remote', source='Free'):
     return {
         'title': (title or '').strip(),
         'company': (company or '').strip(),
-        'description': (description or '').strip(),
+        'description': clean_description(description),
         'link': (link or '').strip(),
         'salary': salary,
         'location': location or 'Remote',
@@ -103,7 +123,7 @@ def search_remoteok(keywords):
         jobs.append(_job(
             title=title,
             company=item.get('company', ''),
-            description=desc[:2000],
+            description=desc,
             link=item.get('url', ''),
             source='RemoteOK',
         ))
@@ -138,7 +158,7 @@ def search_remotive(keywords):
         jobs.append(_job(
             title=title,
             company=item.get('company_name', ''),
-            description=desc[:2000],
+            description=desc,
             link=item.get('url', ''),
             salary=str(salary) if salary else None,
             source='Remotive',
@@ -174,7 +194,7 @@ def search_arbeitnow(query, pages=3):
             jobs.append(_job(
                 title=item.get('title', ''),
                 company=item.get('company_name', ''),
-                description=item.get('description', '')[:2000],
+                description=item.get('description', ''),
                 link=item.get('url', ''),
                 location='Remote' if item.get('remote') else item.get('location', ''),
                 source='Arbeitnow',
@@ -249,7 +269,7 @@ def search_the_muse(keywords, pages=3):
             jobs.append(_job(
                 title=title,
                 company=item.get('company', {}).get('name', ''),
-                description=desc[:2000],
+                description=desc,
                 link=item.get('refs', {}).get('landing_page', ''),
                 location=', '.join(loc_names) or 'Remote',
                 source='The Muse',
@@ -294,7 +314,7 @@ def search_jobicy(tag, count=50):
         jobs.append(_job(
             title=item.get('jobTitle', ''),
             company=item.get('companyName', ''),
-            description=item.get('jobDescription', '')[:2000],
+            description=item.get('jobDescription', ''),
             link=item.get('url', ''),
             salary=salary_str,
             location=item.get('jobGeo', 'Worldwide'),
@@ -346,7 +366,7 @@ def search_weworkremotely(keywords):
         jobs.append(_job(
             title=job_title,
             company=company,
-            description=desc[:2000],
+            description=desc,
             link=link,
             source='WeWorkRemotely',
         ))
@@ -382,7 +402,7 @@ def search_himalayas(query, limit=50):
         jobs.append(_job(
             title=item.get('title', ''),
             company=item.get('company', {}).get('name', '') if isinstance(item.get('company'), dict) else item.get('company', ''),
-            description=item.get('description', '')[:2000],
+            description=item.get('description', ''),
             link=item.get('url', '') or item.get('applicationLink', ''),
             salary=salary_str,
             location='Remote',  # Himalayas is remote-only
@@ -483,7 +503,7 @@ def search_adzuna(query, country='gb', results_per_page=20):
         jobs.append(_job(
             title=item.get('title', ''),
             company=item.get('company', {}).get('display_name', ''),
-            description=item.get('description', '')[:2000],
+            description=item.get('description', ''),
             link=item.get('redirect_url', ''),
             salary=salary_str,
             location=_adzuna_location(item, country),
@@ -532,7 +552,7 @@ def search_jooble(query, location='remote'):
         jobs.append(_job(
             title=item.get('title', ''),
             company=item.get('company', ''),
-            description=item.get('snippet', '')[:2000],
+            description=item.get('snippet', ''),
             link=item.get('link', ''),
             salary=str(salary) if salary else None,
             location=item.get('location', 'Remote'),
@@ -790,7 +810,7 @@ def search_reed(query, location='Remote', results=20):
         jobs.append(_job(
             title=item.get('jobTitle', ''),
             company=item.get('employerName', ''),
-            description=(item.get('jobDescription', '') or '')[:2000],
+            description=(item.get('jobDescription', '') or ''),
             link=item.get('jobUrl', ''),
             salary=salary,
             location=item.get('locationName', 'UK'),

@@ -25,6 +25,29 @@ def force_utf8_streams():
             pass
 
 
+# One rotating handler per log file, shared by every module's logger. Each
+# module used to open its own handler on job_search.log, so about fifteen
+# handles held the file open. On Windows a file cannot be renamed while
+# another handle has it open, so every rotation failed with WinError 32 and
+# printed a traceback per log line: 682 on one run.
+_FILE_HANDLERS = {}
+
+
+def _shared_file_handler(log_file, formatter):
+    key = str(Path(log_file).resolve())
+    handler = _FILE_HANDLERS.get(key)
+    if handler is None:
+        handler = logging.handlers.RotatingFileHandler(
+            log_file,
+            maxBytes=Config.LOG_MAX_BYTES,
+            backupCount=Config.LOG_BACKUP_COUNT,
+            encoding='utf-8'
+        )
+        handler.setFormatter(formatter)
+        _FILE_HANDLERS[key] = handler
+    return handler
+
+
 def setup_logging(name=__name__, log_file=None):
     """Setup rotating file logger."""
     if not log_file:
@@ -33,17 +56,9 @@ def setup_logging(name=__name__, log_file=None):
     # Create logger
     logger = logging.getLogger(name)
     logger.setLevel(getattr(logging, Config.LOG_LEVEL))
-
-    # File handler with rotation
-    file_handler = logging.handlers.RotatingFileHandler(
-        log_file,
-        maxBytes=Config.LOG_MAX_BYTES,
-        backupCount=Config.LOG_BACKUP_COUNT,
-        encoding='utf-8'
-    )
-
-    # Console handler
-    console_handler = logging.StreamHandler()
+    if logger.handlers:
+        # Already set up: a second call must not add a second set of handlers.
+        return logger
 
     # Formatter
     formatter = logging.Formatter(
@@ -51,10 +66,11 @@ def setup_logging(name=__name__, log_file=None):
         datefmt='%Y-%m-%d %H:%M:%S'
     )
 
-    file_handler.setFormatter(formatter)
+    # Console handler
+    console_handler = logging.StreamHandler()
     console_handler.setFormatter(formatter)
 
-    logger.addHandler(file_handler)
+    logger.addHandler(_shared_file_handler(log_file, formatter))
     logger.addHandler(console_handler)
 
     return logger

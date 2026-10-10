@@ -377,9 +377,53 @@ def fetch_successfactors(slug, company_name=None, max_jobs=300):
     # Ask urllib3 to gunzip transparently so iterparse sees XML, not gzip bytes.
     response.raw.decode_content = True
     try:
-        return _sf_jobs_from_stream(response.raw, company_name, slug, max_jobs)
+        jobs = _sf_jobs_from_stream(response.raw, company_name, slug, max_jobs)
     finally:
         response.close()
+    _fill_placeholder_locations(jobs)
+    return jobs
+
+
+# Some Career Site Builder feeds print a template placeholder instead of a
+# place: "City-State-Country, City-State-Country". The country rules then see
+# no country and let the job through, which is how a Milwaukee role reached a
+# digest limited to Europe. The advert page itself names the place under "Job
+# Location:", so for these jobs only, that page is read. Capped in count and
+# time, because a feed can hold dozens of them; a job not reached keeps the
+# placeholder.
+_SF_PLACEHOLDER = re.compile(r'city-state-country', re.I)
+_SF_PAGE_LOCATION = re.compile(
+    r'Job Location:\s*</span>\s*<span[^>]*>\s*([^<]+?)\s*</span>', re.I)
+SF_PLACEHOLDER_MAX_FETCHES = 60
+SF_PLACEHOLDER_BUDGET_SECS = 30
+
+
+def sf_page_location(page_html):
+    """The "Job Location:" value on a SuccessFactors advert page, or ''."""
+    match = _SF_PAGE_LOCATION.search(page_html or '')
+    return match.group(1).strip() if match else ''
+
+
+def _fill_placeholder_locations(jobs):
+    """Replace a placeholder location with the one on the advert page."""
+    started = time.monotonic()
+    fetches = 0
+    for job in jobs:
+        if not _SF_PLACEHOLDER.search(job.get('location') or ''):
+            continue
+        if (fetches >= SF_PLACEHOLDER_MAX_FETCHES
+                or time.monotonic() - started > SF_PLACEHOLDER_BUDGET_SECS):
+            break
+        fetches += 1
+        try:
+            page = detail_session.get(job['link'], headers=HEADERS, timeout=DETAIL_TIMEOUT)
+            place = sf_page_location(page.text) if page.status_code == 200 else ''
+        except Exception:
+            place = ''
+        if place:
+            job['location'] = successfactors_location(place)
+            job['title'] = re.sub(r'\s*\((?:\s*City-State-Country\s*,?)+\)', '',
+                                  job['title'], flags=re.I).strip()
 
 
 FETCHERS = {
