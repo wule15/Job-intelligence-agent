@@ -119,7 +119,7 @@ def test_bullets_do_not_share_a_preferred_marker():
 # ── Year range with any dash ──────────────────────────────────────────────────
 
 def test_year_range_with_non_breaking_hyphen():
-    for dash in ('‐', '‑', '–', '—', '-'):
+    for dash in ('\u2010', '\u2011', '\u2013', '\u2014', '-'):
         assert required_experience(f'3{dash}7 years experience')[0] == 3, ascii(dash)
 
 
