@@ -490,7 +490,7 @@ def text_countries(text):
     return _named_codes(text)
 
 
-# A remote job tied to one country: "United States \u2013 Remote", "Remote -
+# A remote job tied to one country: "United States - Remote", "Remote -
 # Germany", "Remote (UK)" in the advert, or "...-united-states-remote" in the
 # link. Google Jobs labels every remote job "Anywhere", which reads as
 # worldwide, so a US-only remote role reached a Europe-only digest.
