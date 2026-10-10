@@ -90,6 +90,10 @@ ENRICH
   so its adverts are fetched first, under their own budget of 100 fetches
   and 60 seconds, and a busy day on the company boards cannot leave them
   scored on a teaser. The company boards get 60 fetches and 90 seconds.
+  Free-board text is kept as plain text up to 8000 characters, since
+  adverts list their requirements last. A SuccessFactors job whose feed
+  location is the placeholder "City-State-Country" gets its place from
+  the advert page (at most 60 pages and 30 seconds).
       |
       v
 FILTER
@@ -97,7 +101,9 @@ FILTER
   is scored. Hand-saved jobs skip every rule except the first.
     Scam boards       known fake boards and free-hosting apply links
     Titles            senior titles (Senior, Lead, Staff, Principal, Head
-                      of, Director, VP, Chief; Manager is kept), software
+                      of, Director, VP, Chief, and Major, Strategic or
+                      Enterprise Account Executive; Manager and Key Account
+                      Manager are kept), software
                       titles, and two optional private lists: job functions
                       (EXCLUDED_TITLE_TERMS, e.g. HR, payroll, marketing)
                       and trade titles (DROP_LOCAL_TRADE_TITLES: technician,
