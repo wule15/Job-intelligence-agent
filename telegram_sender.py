@@ -540,7 +540,7 @@ def suppress_ineligible():
                 if source in ALWAYS_INCLUDE_SOURCES:
                     continue
                 reason = (title_drop_reason(title, source or '')
-                          or fails_eligibility(title, description, location))
+                          or fails_eligibility(title, description, location, link))
                 if not reason and requires_unspoken_language(
                         f"{title or ''}\n{description or ''}"):
                     reason = 'language_required'

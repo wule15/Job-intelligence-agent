@@ -34,6 +34,7 @@ Standard library only.
 """
 
 import re
+from urllib.parse import urlparse
 
 from core.multilingual import fold_diacritics
 
@@ -487,6 +488,36 @@ def text_countries(text):
     the same way as a location field's names. Cities count, see
     CITY_COUNTRIES. Used only when the location is a placeholder."""
     return _named_codes(text)
+
+
+# A remote job tied to one country: "United States – Remote", "Remote -
+# Germany", "Remote (UK)" in the advert, or "...-united-states-remote" in the
+# link. Google Jobs labels every remote job "Anywhere", which reads as
+# worldwide, so a US-only remote role reached a Europe-only digest.
+_REMOTE_BOUND = re.compile(
+    r'([a-z][a-z .]{1,40}?)\s*[-–—]\s*remote\b'
+    r'|\bremote\s*[-–—(:]\s*([a-z][a-z .]{1,40})')
+
+
+def remote_countries(text, link=''):
+    """
+    The countries a remote job says it is remote in, from the advert text
+    and the link's path, as country codes. Empty when it names none.
+    """
+    found = set()
+    windows = [fold_diacritics(text or '')]
+    path = urlparse(link or '').path if link else ''
+    if path:
+        words = re.split(r'[/_\-.]+', fold_diacritics(path))
+        for i, word in enumerate(words):
+            if word == 'remote':
+                windows.append(' '.join(words[max(0, i - 3):i]))
+                windows.append(' '.join(words[i + 1:i + 4]))
+    for window in windows[1:]:
+        found |= _named_codes(window)
+    for match in _REMOTE_BOUND.finditer(windows[0]):
+        found |= _named_codes(match.group(1) or match.group(2))
+    return {code for code in found if code in COUNTRY_NAMES}
 
 
 def with_countries(location, countries):

@@ -132,7 +132,10 @@ FILTER
   the advert when a mechanical engineer is named anywhere in it, when a
   sentence that names a degree also names a second discipline or a generic
   alternative ("or a related field", "or Computer Science"), or when the
-  electrical degree is only preferred.
+  electrical degree is only preferred. An advert published with its
+  template unfilled (two or more brackets such as "[Jobtitel]" or "[Task #1,
+  max. 5 bullet points]", or "lorem ipsum") is dropped, because its
+  requirements cannot be read.
   Software titles (including data, machine-learning, cloud and security
   engineering) are dropped on every source, except titles that name QA or
   testing, industrial control programming (PLC, SCADA, HMI, DCS, CNC,
@@ -141,8 +144,11 @@ FILTER
   local board are also kept, and lifted to the regional score bar.
   The allow-list reads the location field. A location that names no country
   is left to the text rules, and a remote job whose advert says it is open
-  worldwide is kept. The required-language check drops an advert that asks
-  for a listed language fluent or at C1, and keeps B1, B2 and "a plus". The
+  worldwide is kept. A remote or "Anywhere" job that names the one country
+  it is remote in ("United States - Remote", or a link ending
+  "-united-states-remote") is judged by that country. The required-language
+  check drops an advert that asks for a listed language fluent or at C1
+  (or, in German, "sichere" or better), and keeps B1, B2 and "a plus". The
   advert-language check reads the advert's common words and drops one
   clearly written in a language you list; a teaser, a mixed advert, one in
   Cyrillic or one that names English as the working language is never

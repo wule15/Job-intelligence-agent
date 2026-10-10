@@ -10,7 +10,7 @@ from pathlib import Path
 from core.config import Config
 from core.countries import (
     COUNTRY_NAMES, US_STATE_CODES, expand_codes, is_placeholder_location, is_remote_place,
-    location_countries, names_for, text_countries,
+    location_countries, names_for, remote_countries, text_countries,
 )
 from core.utils import setup_logging
 from core.synonym_map import skill_matches
@@ -865,6 +865,14 @@ def is_outside_allowed_countries(job: dict, allowed=None, sponsorship_only=None,
         if named & allowed_set:
             return False
         codes = {code for code in named if code in COUNTRY_NAMES}
+    if not codes and (not location.strip() or is_remote_place(location)):
+        # "Anywhere" or "Remote" with no country: a remote job that says
+        # where it is remote ("United States – Remote", a link ending
+        # "-united-states-remote") is judged by that country.
+        named = remote_countries(advert, job.get('link') or '')
+        if named & allowed_set:
+            return False
+        codes = named
     if not codes:
         return False  # unplaced, or open worldwide: left to the text rules
     if codes & allowed_set:
@@ -879,7 +887,7 @@ def is_outside_allowed_countries(job: dict, allowed=None, sponsorship_only=None,
     return bool(allowed_set)
 
 
-def fails_eligibility(title, description, location):
+def fails_eligibility(title, description, location, link=''):
     """
     The first hard rule a job breaks, as the filter's reason name, or None.
 
@@ -897,7 +905,8 @@ def fails_eligibility(title, description, location):
     if is_excluded_location(location):
         return 'excluded_location'
     if is_outside_allowed_countries(
-            {'title': title, 'description': description, 'location': location}):
+            {'title': title, 'description': description, 'location': location,
+             'link': link or ''}):
         return 'outside_allowed_countries'
     return None
 
@@ -1512,16 +1521,37 @@ def requires_electrical_degree(text: str) -> bool:
     return any(_ELECTRICAL_DEGREE.search(clause) for clause in _clauses(t))
 
 
+# ── Unfinished adverts ────────────────────────────────────────────────────────
+# An advert published with its template still in it: "[Jobtitel]",
+# "[Aufgabe #1, max. 3-5 Bulletpoints]", "[Insert company description]",
+# "Lorem ipsum". Its requirements cannot be read, so it is dropped. A single
+# bracket is not enough, since adverts use brackets for "(m/w/d)" and "[EN]";
+# two template brackets, or the lorem ipsum filler, are.
+_TEMPLATE_BRACKET = re.compile(
+    r'\[[^\]\n]{0,120}?\b(?:insert|placeholder|jobtitel|job title|company name|'
+    r'beschreibe|describe|aufgabe\s*#|anforderung\s*#|task\s*#|requirement\s*#|'
+    r'bulletpoints?|bullet points?|z\.\s?b\.|e\.g\.|tbd|xxx)[^\]\n]{0,120}\]')
+_LOREM = re.compile(r'\blorem ipsum\b')
+
+
+def is_template_advert(text: str) -> bool:
+    """True for an advert still carrying its unfilled template."""
+    t = fold_diacritics(text or '')
+    return bool(_LOREM.search(t)) or len(_TEMPLATE_BRACKET.findall(t)) >= 2
+
+
 def content_drop_reason(title: str, description: str):
     """
-    The reason the advert text rules a job out on years or degree, as the
-    filter's reason name, or None. Shared by the filter and the digest's
-    recheck of stored rows.
+    The reason the advert text rules a job out on years, degree or an
+    unfinished template, as the filter's reason name, or None. Shared by the
+    filter and the digest's recheck of stored rows.
     """
     if requires_too_many_years(description):
         return 'experience_required'
     if requires_electrical_degree(description):
         return 'electrical_degree'
+    if is_template_advert(description):
+        return 'template_advert'
     return None
 
 
@@ -1568,7 +1598,9 @@ _HIGH_BEFORE = (
     # The noun only before a level word, "Excellence knowledge of Dutch", so
     # "operational excellence in Dutch operations" is not a requirement.
     r'excellence(?=\s+(?:knowledge|command|skills?|proficiency|level))|'
-    r'perfect|very good|(?<!bis )sehr gut\w*|verhandlungssicher\w*|'
+    # "Sichere Deutschkenntnisse" (solid German) sits above "gute" and is
+    # read as a requirement, like "sehr gute".
+    r'perfect|very good|(?<!bis )sehr gut\w*|verhandlungssicher\w*|sicher(?:e|en|er|es|em)?\b|'
     r'flie(?:ss|ß)end\w*|ausgezeichnet\w*|exzellent\w*|hervorragend\w*|'
     r'muttersprachlich\w*|perfekt\w*|vloeiend\w*|uitstekend\w*|maitrise|'
     r'parfait\w*|bilingu\w*|zweisprachig\w*|tec(?:no|nim|an|na)\w*|odlicn\w*|'
@@ -1609,7 +1641,8 @@ _ADJECTIVE_USE = (
 _HIGH_AFTER = (
     r'fluen(?:t|cy|tly)\b|c[12]\b|native|mother tongue|verhandlungssicher\w*|'
     r'flie(?:ss|ß)end\w*|muttersprach\w*|courant|moedertaal\w*|vloeiend\w*|'
-    r'excellent\w*|perfe(?:ct|kt)\w*|sehr gut\w*|tec(?:no|nim|an|na)\w*|odlicn\w*')
+    r'excellent\w*|perfe(?:ct|kt)\w*|sehr gut\w*|sicher(?:e|en|er|es|em)?\b|'
+    r'tec(?:no|nim|an|na)\w*|odlicn\w*')
 _CLAUSE_SPLIT = re.compile('[.\n\r;|!?•·●▪]+')
 # Abbreviations whose full stop would split "Deutschkenntnisse (mind. C1)".
 _ABBREVIATION_DOT = re.compile(r'\b(mind|min|bzw|ca|evtl|inkl)\.')
@@ -2174,6 +2207,7 @@ class JobFilter:
             'advert_language': 0,
             'experience_required': 0,
             'electrical_degree': 0,
+            'template_advert': 0,
             'below_min_score': 0,
             'same_posting': 0,
         }
