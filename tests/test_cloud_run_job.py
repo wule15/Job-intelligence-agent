@@ -327,6 +327,13 @@ def is_download(method, url):
     return method == 'GET' and 'alt=media' in url
 
 
+def uploads_of(ctx, name):
+    """Upload requests made for one object name, answered or not."""
+    wanted = f"name={urllib.parse.quote(name, safe='')}"
+    return [url for method, url in ctx.cloud.log
+            if is_upload(method, url) and wanted in url.split('?', 1)[1].split('&')]
+
+
 # ── Happy path ───────────────────────────────────────────────────────────────
 
 class TestHappyPath:
@@ -539,16 +546,15 @@ class TestSaving:
         assert conflicts[0] in ctx.cloud.telegram[0]
 
     def test_upload_retries_are_bounded(self, ctx):
-        for _ in range(crj.HTTP_ATTEMPTS + 5):
+        for _ in range(2 * crj.HTTP_ATTEMPTS + 5):
             ctx.cloud.fault(is_upload, crj.NetworkError('TimeoutError'))
 
         assert ctx.run() == crj.NOT_SAVED
-        assert len([1 for method, url in ctx.cloud.log if is_upload(method, url)]) \
-            == crj.HTTP_ATTEMPTS
+        assert len(uploads_of(ctx, OBJECT)) == crj.HTTP_ATTEMPTS
         assert ctx.saved() == ctx.seed
 
     def test_upload_retries_stop_at_the_deadline(self, ctx):
-        for _ in range(crj.HTTP_ATTEMPTS):
+        for _ in range(crj.HTTP_ATTEMPTS + 1):
             ctx.cloud.fault(is_upload, crj.NetworkError('TimeoutError'))
 
         def send(timeout):
@@ -557,7 +563,52 @@ class TestSaving:
         ctx.runner.actions['telegram_sender.py'] = send
 
         assert ctx.run() == crj.NOT_SAVED
-        assert len([1 for method, url in ctx.cloud.log if is_upload(method, url)]) == 1
+        assert len(uploads_of(ctx, OBJECT)) == 1
+
+    def test_a_last_attempt_that_lands_with_its_answer_lost_is_success(self, ctx):
+        # Every answer is lost, but the last attempt did reach the bucket.
+        for _ in range(crj.HTTP_ATTEMPTS - 1):
+            ctx.cloud.fault(is_upload, crj.NetworkError('TimeoutError'))
+
+        def lands_then_drops(cloud, method, url, headers, body):
+            cloud.handle(method, url, headers, body)
+            raise crj.NetworkError('ConnectionResetError')
+        ctx.cloud.fault(is_upload, lands_then_drops)
+
+        assert ctx.run() == crj.OK
+        assert rows(ctx.saved(), 'SELECT job_id FROM telegram_sent_jobs', ctx.tmp) == [(2,)]
+        assert ctx.cloud.telegram == []
+
+    def test_a_refused_upload_keeps_this_runs_copy_under_unsaved(self, ctx):
+        # A service account that may create objects but not replace them gets
+        # 403 on the overwrite. The sent marks must not be lost with the
+        # container: the copy goes to a new name, which the role allows.
+        ctx.cloud.fault(lambda method, url: is_upload(method, url)
+                        and urllib.parse.quote(OBJECT, safe='') in url,
+                        (403, b'{"error": {}}'))
+
+        assert ctx.run() == crj.NOT_SAVED
+        assert ctx.saved() == ctx.seed
+        kept = [name for name in ctx.cloud.objects if name.startswith('unsaved/')]
+        assert len(kept) == 1 and kept[0].endswith('.db')
+        ours = ctx.cloud.objects[kept[0]]['data']
+        assert rows(ours, 'SELECT job_id FROM telegram_sent_jobs', ctx.tmp) == [(2,)]
+        assert len(ctx.cloud.telegram) == 1
+        assert kept[0] in ctx.cloud.telegram[0]
+
+    def test_when_no_copy_can_be_kept_the_notice_says_so(self, ctx):
+        for _ in range(4 * crj.HTTP_ATTEMPTS):
+            ctx.cloud.fault(is_upload, crj.NetworkError('TimeoutError'))
+
+        assert ctx.run() == crj.NOT_SAVED
+        assert [name for name in ctx.cloud.objects if name.startswith('unsaved/')] == []
+        assert 'could not be kept' in ctx.cloud.telegram[0]
+
+    def test_a_request_timeout_answer_is_retried(self, ctx):
+        ctx.cloud.fault(is_upload, (408, b'{}'))
+
+        assert ctx.run() == crj.OK
+        assert ctx.cloud.uploads == [(OBJECT, ctx.generation, 200)]
 
     def test_a_server_error_on_upload_is_retried(self, ctx):
         ctx.cloud.fault(is_upload, (503, b'{}'))
@@ -612,6 +663,33 @@ class TestTimeLimits:
         search = ctx.runner.calls[0]
         assert search['timeout'] == (crj.RUN_DEADLINE_SECS - 600
                                      - crj.SEND_LIMIT_SECS - crj.UPLOAD_RESERVE_SECS)
+
+    def test_a_late_send_gets_only_the_time_left_before_the_upload(self, ctx):
+        # A slow start, a search that used its whole limit and a slow re-check
+        # leave less than the full send limit. The send must not eat the
+        # time the upload needs.
+        def slow_download(cloud, method, url, headers, body):
+            ctx.clock.advance(600)
+            return cloud.handle(method, url, headers, body)
+        ctx.cloud.fault(is_download, slow_download)
+
+        def search(timeout):
+            ctx.clock.advance(timeout)
+            return 0
+        ctx.runner.actions['job_search_smart.py'] = search
+        metadata_calls = []
+
+        def slow_recheck(cloud, method, url, headers, body):
+            metadata_calls.append(url)
+            if len(metadata_calls) == 2:
+                ctx.clock.advance(100)
+            return cloud.handle(method, url, headers, body)
+        for _ in range(2):
+            ctx.cloud.fault(is_metadata, slow_recheck)
+
+        assert ctx.run() == crj.OK
+        send = ctx.runner.calls[1]
+        assert send['timeout'] == crj.SEND_LIMIT_SECS - 100
 
     def test_a_send_that_times_out_still_saves_the_database(self, ctx):
         def hangs(timeout):
@@ -689,6 +767,31 @@ class TestFailureNotice:
             for secret in list(SECRET_ENV.values()) + [ACCESS_TOKEN, BUCKET]:
                 assert secret not in text
             assert 'http' not in text.lower()
+
+    def test_an_unexpected_error_after_the_send_started_says_a_re_run_is_not_safe(self, ctx):
+        ctx.cloud.fault(is_upload, ValueError('boom'))
+
+        assert ctx.run() == crj.UNEXPECTED
+        assert ctx.runner.scripts == ['job_search_smart.py', 'telegram_sender.py']
+        line = ctx.cloud.telegram[0]
+        assert 'after the send started' in line
+        assert 'Safe to re-run' not in line
+
+    def test_a_value_from_the_env_file_is_hidden_in_the_notice_and_log(
+            self, ctx, capsys, monkeypatch):
+        # No message is built from a secret today. The scrub is the backstop
+        # if one ever is, for example a database error that quotes a value.
+        token = SECRET_ENV['TELEGRAM_BOT_TOKEN']
+
+        def send(timeout):
+            monkeypatch.setattr(crj, 'check_database', lambda path: f'bad value {token}')
+            return 0
+        ctx.runner.actions['telegram_sender.py'] = send
+
+        assert ctx.run() == crj.NOT_SAVED
+        assert token not in ctx.cloud.telegram[0]
+        assert '[hidden]' in ctx.cloud.telegram[0]
+        assert token not in capsys.readouterr().out
 
     def test_success_sends_no_notice(self, ctx):
         assert ctx.run() == crj.OK

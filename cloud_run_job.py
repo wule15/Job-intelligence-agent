@@ -40,7 +40,9 @@ Storage bucket between runs. Standard library only, plus python-dotenv.
    are retried a few times within the run's deadline. A refused upload is
    checked against the live object's MD5, because an earlier attempt whose
    answer was lost may have landed. A real conflict saves this run's copy as
-   conflicts/<UTC time>.db and leaves the live object alone.
+   conflicts/<UTC time>.db and leaves the live object alone. An upload that
+   fails for any other reason saves it as unsaved/<UTC time>.db if it can,
+   so the record of what was sent is not lost with the container.
 
 Any failure sends one plain line to Telegram naming what failed and whether
 re-running is safe. Neither that line nor the printed log carries a URL, a
@@ -51,7 +53,9 @@ DB_OBJECT=shadow/job_digest.db and DIGEST_LABEL=[SHADOW], so it works on its
 own copy of the database and its messages are marked.
 
 The job needs a task timeout of 30 minutes, max retries 0, and a service
-account that can read and write objects in the bucket. A retry after the
+account that can read, create and replace objects in the bucket. Replacing
+an object needs storage.objects.delete as well as create, so a create-only
+role such as Storage Object Creator is not enough; Storage Object User is. A retry after the
 send would send the digest again, so this script refuses to run as one.
 
 Exit codes
@@ -72,7 +76,8 @@ Exit codes
       saved.
    9  The send failed or timed out. The database was saved.
   10  The send ran but the database was not saved: it failed its check, or
-      the upload failed.
+      the upload failed. After a failed upload this run's copy is kept as
+      unsaved/<UTC time>.db when the bucket accepts it.
   11  Another run wrote the database during this one. This run's copy went
       to conflicts/ and the live object was left alone.
 """
@@ -213,7 +218,7 @@ class Storage:
 
     def _request(self, step, method, url, headers=None, body=None):
         """
-        Send a request, retrying no answer, 429 and 5xx while attempts and
+        Send a request, retrying no answer, 408, 429 and 5xx while attempts and
         time remain. Returns (status, body) for any other answer.
         """
         wait = FIRST_RETRY_WAIT_SECS
@@ -225,7 +230,7 @@ class Storage:
             except _Retryable as error:
                 problem = str(error)
             else:
-                if status != 429 and status < 500:
+                if status not in (408, 429) and status < 500:
                     return status, data
                 problem = f'HTTP {status}'
             if attempt == HTTP_ATTEMPTS or self.time_left() <= wait:
@@ -461,7 +466,7 @@ class _Run:
 
         problem = check_database(self.db_path)
         if problem:
-            say(f'[!] Database check: {problem}')
+            say(self.scrub(f'[!] Database check: {problem}'))
             raise Stop(DB_DAMAGED, (
                 f'Cloud digest stopped: the stored database failed its check ({problem}). '
                 'Nothing was sent. A re-run will stop the same way until a good copy is '
@@ -510,7 +515,7 @@ class _Run:
     def save(self, name, generation):
         problem = finish_database(self.db_path)
         if problem:
-            say(f'[!] Database check after the send: {problem}')
+            say(self.scrub(f'[!] Database check after the send: {problem}'))
             raise Stop(NOT_SAVED, (
                 f'Cloud digest: the send ran but the database was not saved, because it '
                 f'failed its check ({problem}). {NOT_SAVED_TAIL}'))
@@ -522,22 +527,36 @@ class _Run:
                 say(f'[*] Database saved, {len(data) // 1024} KB')
                 return
             say('[!] The database in the bucket changed during the run, not overwriting it')
-            copy_name = f"conflicts/{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}.db"
-            try:
-                kept = self.storage.upload(copy_name, data, md5, 0)
-            except StorageError:
-                kept = False
+            kept = self.keep_copy('conflicts', data, md5)
         except StorageError as error:
+            # The container's disk goes when the run ends, and with it the
+            # record of what was sent. A refusal such as a missing permission
+            # to replace the object still allows a new name, so keep it there.
+            say(f"[!] The upload failed ({error}), keeping this run's copy under unsaved/")
+            kept = self.keep_copy('unsaved', data, md5)
+            where = (f"This run's copy was kept as {kept}; restore it as {name} before "
+                     "the next run." if kept else "This run's copy could not be kept either.")
             raise Stop(NOT_SAVED, (
                 f'Cloud digest: the send ran but the database could not be saved ({error}). '
-                f'{NOT_SAVED_TAIL}'))
+                f'{where} {NOT_SAVED_TAIL}'))
 
-        where = (f"This run's copy was saved as {copy_name}." if kept
+        where = (f"This run's copy was saved as {kept}." if kept
                  else "This run's copy could not be saved.")
         raise Stop(CONFLICT, (
             'Cloud digest: another run wrote the database while this one was sending, so '
             f'this run did not overwrite it. {where} Do not re-run until the two copies '
             "are reconciled, because a re-run would repeat today's jobs."))
+
+    def keep_copy(self, folder, data, md5):
+        """Save this run's database under folder/<UTC time>.db. Its name, or None."""
+        copy_name = f"{folder}/{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}.db"
+        try:
+            if self.storage.upload(copy_name, data, md5, 0):
+                say(f"[*] This run's copy saved as {copy_name}")
+                return copy_name
+        except StorageError:
+            pass
+        return None
 
     # ── Failure ──────────────────────────────────────────────────────────────
 
