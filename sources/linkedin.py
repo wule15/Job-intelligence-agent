@@ -15,6 +15,7 @@ quietly and report itself rather than to be relied on. It is rate limited
 aggressively; the delay between pages is not optional.
 """
 
+import re
 import time
 from urllib.parse import urlencode
 
@@ -27,6 +28,10 @@ from core.utils import setup_logging
 logger = setup_logging('sources.linkedin')
 
 SEARCH_URL = 'https://www.linkedin.com/jobs-guest/jobs/api/seeMoreJobPostings/search'
+# One posting's full text, also a guest endpoint. The search cards carry no
+# description, so without this the language and years rules saw nothing.
+POSTING_URL = 'https://www.linkedin.com/jobs-guest/jobs/api/jobPosting/{job_id}'
+_JOB_ID = re.compile(r'(\d{8,})/?$')
 
 HEADERS = {
     'User-Agent': (
@@ -162,3 +167,22 @@ if __name__ == '__main__':
     for job in searcher.search_all(['remote sales engineer'], pages=1)[:5]:
         print(f"{job['title']} @ {job['company']}")
         print(f"  {job['link']}")
+
+
+def fetch_linkedin_detail(link, session, timeout):
+    """
+    The full advert text for one LinkedIn job, one line per paragraph or
+    bullet, or '' when the link carries no job id or the page has no text.
+    Raises on an HTTP error, so the caller counts it as a failed fetch.
+    """
+    match = _JOB_ID.search((link or '').split('?')[0])
+    if not match:
+        return ''
+    response = session.get(POSTING_URL.format(job_id=match.group(1)),
+                           headers=HEADERS, timeout=timeout)
+    if response.status_code != 200:
+        raise RuntimeError(f'HTTP {response.status_code}')
+    soup = BeautifulSoup(response.text, 'html.parser')
+    body = (soup.select_one('.show-more-less-html__markup')
+            or soup.select_one('.description__text'))
+    return body.get_text('\n', strip=True) if body else ''

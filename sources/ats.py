@@ -438,7 +438,7 @@ FETCHERS = {
 # Sources whose list endpoint returns titles without descriptions. Scoring a
 # title against a CV is close to meaningless, so these need a second request
 # per job to be comparable with sources that return full text.
-NEEDS_DETAIL_FETCH = {'SmartRecruiters', 'Workday', 'Infostud'}
+NEEDS_DETAIL_FETCH = {'SmartRecruiters', 'Workday', 'Infostud', 'LinkedIn'}
 
 # Sources whose description is only a teaser. Fetched even when the teaser is
 # there, because a two-line snippet scores almost as badly as a bare title.
@@ -526,10 +526,17 @@ def _detail_infostud(job):
     return fetch_infostud_detail(job['link'], session=detail_session, timeout=DETAIL_TIMEOUT)
 
 
+def _detail_linkedin(job):
+    """Full advert text for one LinkedIn job, from the guest posting endpoint."""
+    from sources.linkedin import fetch_linkedin_detail
+    return fetch_linkedin_detail(job['link'], session=detail_session, timeout=DETAIL_TIMEOUT)
+
+
 DETAIL_FETCHERS = {
     'SmartRecruiters': _detail_smartrecruiters,
     'Workday': _detail_workday,
     'Infostud': _detail_infostud,
+    'LinkedIn': _detail_linkedin,
 }
 
 
@@ -568,6 +575,8 @@ def enrich_descriptions(jobs, should_fetch, max_fetches=60, max_snippet_fetches=
     ]
     snippets = [job for job in candidates if job['source'] in SNIPPET_ONLY_SOURCES]
     title_only = [job for job in candidates if job['source'] not in SNIPPET_ONLY_SOURCES]
+    # LinkedIn last, so its cards cannot spend the company boards' budget.
+    title_only.sort(key=lambda job: job['source'] == 'LinkedIn')
 
     enriched, over_budget = 0, 0
     for group, limit, seconds, label in (

@@ -54,7 +54,8 @@ SOURCES
                           Federal Employment Agency), Adzuna, Jooble and Reed
                           (the last three need a free key), plus an optional
                           local board switched on with REGIONAL_BOARDS
-  LinkedIn                Public guest endpoint, no authentication
+  LinkedIn                Public guest endpoint, no authentication. Cards
+                          have no text; the posting is fetched in ENRICH
   JSearch                 RapidAPI, metered, capped by JSEARCH_BUDGET
                           (40 queries a run by default)
   Apify                   LinkedIn with full text, plus Indeed listings
@@ -83,7 +84,8 @@ ENRICH
   Some boards return a title and no description. Scoring those measures
   how much text the source returned, not how well the job fits. A cheap
   title screen decides which are worth a second request, then the full
-  description is fetched for those only. The screen skips titles the title
+  description is fetched for those only. LinkedIn cards are fetched last,
+  so they cannot spend the company boards' budget. The screen skips titles the title
   rules will drop and jobs located only in countries you cannot work in.
   It also accepts local-language role words listed in TITLE_SCREEN_TERMS,
   matched without diacritics. The local board returns only a short teaser,

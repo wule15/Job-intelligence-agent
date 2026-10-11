@@ -417,6 +417,15 @@ _QUESTION_START = re.compile(
     r'(?:you|the candidate|the applicant|applicants|candidates)\b')
 _SENTENCE_ENDS = '.!?;\n\u2022'
 REFUSAL_LOOKBACK_WORDS = 8
+# A refusal aimed at the candidates who need sponsorship: "we are not able to
+# consider candidates who currently or in the future will require visa
+# sponsorship". The negation sits more than eight words back, so the lookback
+# misses it. When the words just before the sponsorship word say a candidate
+# needs it, a refusal to consider, hire or accept earlier in the same
+# sentence counts.
+_REFUSE_CANDIDATES = re.compile(
+    r"(?:\b(?:not|unable|cannot|never)\b|n't\b)(?:\s+[a-z']+){0,3}?\s+"
+    r'(?:consider|hire|accept|employ|interview|move forward with|proceed with)\b')
 
 # Worldwide eligibility. In the location field the bare words count
 # ("Worldwide", "Global", "Anywhere") when no country is named next to them.
@@ -592,7 +601,9 @@ def sponsorship_stance(text: str):
         before = ' '.join(before.split()[-REFUSAL_LOOKBACK_WORDS:])
         negations = list(_NEGATION.finditer(before))
         refused = ((negations and not _NEW_SUBJECT.search(before[negations[-1].end():]))
-                   or _REFUSED_AFTER.match(after))
+                   or _REFUSED_AFTER.match(after)
+                   or (_CANDIDATE_NEED.search(before)
+                       and _REFUSE_CANDIDATES.search(t[left:match.start()])))
         if refused and (_PARTIAL_CAVEAT_AFTER.match(after)
                         or _PARTIAL_CAVEAT_BEFORE.search(before)):
             continue  # some roles are sponsored, see _PARTIAL_CAVEAT_AFTER
@@ -1611,8 +1622,9 @@ _LEVEL_FILLER = (
     r'(?:in|of|the|a|an|and|written|spoken|oral|verbal|communication|command|knowledge|skills?|'
     r'proficiency|language|level|speaker|znanje|znanjem|poznavanje|kenntnisse|'
     r'sprachkenntnisse|jezik\w*|sprache|beheersing|van|het|de|du|la|u)')
-# A list before the language: "fluent in English and German".
-_LIST_ITEM = r'[a-z\-]+\s*(?:,|/|&|(?:and|und|i|et|en)\b)\s*'
+# A list before the language: "fluent in English and German", "fluency in
+# English and in Swedish".
+_LIST_ITEM = r'[a-z\-]+\s*(?:,|/|&|(?:and|und|i|et|en)\b)\s*(?:(?:in|of)\s+)?'
 # Words a requirement puts after the language, before its level: "German
 # language skills (B2)", "German at C1 level", "Deutsch auf B2-Niveau",
 # "Deutsch als Muttersprache", "German (at least C1)", "Deutsch mind. C1".
@@ -1651,6 +1663,7 @@ _TEAM_DESCRIPTION = re.compile(
     r'\b(?:our|the)\s+(?:\w+\s+){0,2}?(?:team|teams|colleagues|staff|employees|'
     r'engineers|people|company|office)\s+(?:speaks?|is|are|works?)\b|\bwe (?:all )?speak\b')
 _OR_WORD = r'\b(?:or|oder|ili|ou|bzw)\b'
+_AND_WORD = r'\b(?:and|und|et|en|i)\b'
 
 
 @lru_cache(maxsize=8)
@@ -1675,9 +1688,11 @@ def _language_patterns(names):
         rf'\s*[(:\-–]?\s*'
         rf'(?:{_PREPOSITION})?(?:{_AT_LEAST})?'
         rf'(?:{_HIGH_AFTER})')
+    # No "and" between English and the "or": in "English and Swedish or
+    # Danish" the choice is between two languages, both on top of English.
     alternative = re.compile(
-        rf'(?:{lang})[^,;]*?{_OR_WORD}[^,;]*?{_ENGLISH}'
-        rf'|{_ENGLISH}[^,;]*?{_OR_WORD}[^,;]*?(?:{lang})')
+        rf'(?:{lang})(?:(?!{_AND_WORD})[^,;])*?{_OR_WORD}[^,;]*?{_ENGLISH}'
+        rf'|{_ENGLISH}(?:(?!{_AND_WORD})[^,;])*?{_OR_WORD}[^,;]*?(?:{lang})')
     return before, after, alternative
 
 
@@ -1710,8 +1725,12 @@ def requires_unspoken_language(text: str, languages=None) -> bool:
         return False
     before, after, alternative = _language_patterns(names)
     for clause in _clauses(text):
-        if _TEAM_DESCRIPTION.search(clause) or alternative.search(clause):
+        if _TEAM_DESCRIPTION.search(clause):
             continue
+        # The language offered as an alternative to English is cut out and
+        # the rest of the clause is still read: in "fluent German and English
+        # or French" German is still required.
+        clause = alternative.sub(' ', clause)
         if before.search(clause) or after.search(clause):
             return True
     return False
