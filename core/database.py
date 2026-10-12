@@ -143,9 +143,32 @@ class Database:
                 CREATE UNIQUE INDEX IF NOT EXISTS idx_jobs_dedup_key
                 ON jobs(dedup_key)
             ''')
+            self._forget_seen_links_once(cursor)
             self.connection.commit()
         except Exception as e:
             print(f"[!] Migration warning: {e}")
+
+    # Until 12 October 2026 dedup_key dropped everything after " - ", so
+    # "Project Engineer - Calculation" was merged into the row of "Project
+    # Engineer - Mechanical" at the same company, and its link was still
+    # marked seen. A seen link is never processed again, so those openings
+    # stayed hidden after the key was fixed. Clearing the seen links once lets
+    # the next run score every listing again. The send history, matched on
+    # link, still stops anything already sent from going out twice.
+    SEEN_LINKS_RESET = 'forget_seen_links_title_key_2026_10_12'
+
+    def _forget_seen_links_once(self, cursor):
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS migrations (
+                name TEXT PRIMARY KEY,
+                applied TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+        cursor.execute('SELECT 1 FROM migrations WHERE name = ?', (self.SEEN_LINKS_RESET,))
+        if cursor.fetchone():
+            return
+        cursor.execute('DELETE FROM job_links_seen')
+        cursor.execute('INSERT INTO migrations (name) VALUES (?)', (self.SEEN_LINKS_RESET,))
 
     def close(self):
         """Close the shared database connection and drop it from the registry

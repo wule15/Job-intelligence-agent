@@ -215,11 +215,12 @@ class TestAcrossDays:
         assert not any(title in second for title in JOB_TITLES)
 
     def test_a_quiet_day_still_reports_a_broken_source(self, pipeline, monkeypatch):
-        """No new jobs on day two, but Apify is still down: the note goes alone."""
+        """No new jobs on day two, but Apify is still down: each digest says it
+        has nothing, and the main one carries the health note."""
         run_day(pipeline, monkeypatch)
         second = run_day(pipeline, monkeypatch)
-        assert len(second) == 1
-        assert 'Apify' in second[0]
+        assert all('No new jobs today' in m for m in second)
+        assert 'Apify' in second[-1]
 
     def test_a_failed_send_is_retried_next_day(self, pipeline, monkeypatch):
         failed = run_day(pipeline, monkeypatch, status=500)

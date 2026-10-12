@@ -187,24 +187,26 @@ class TestZeroDay:
         add(db, 'Aggregator Role', 'Co B', 35.0)
         add(db, 'Home Role', 'Co C', 25.0, location='Testgrad, Testland')
         telegram_sender.main()
-        assert len(chat) == 1
-        assert 'No job cleared the score bar' in chat[0]
-        assert not any(t in chat[0] for t in ('Board Role', 'Aggregator Role', 'Home Role'))
+        # Every digest sends its own message, empty or not.
+        assert len(chat) == 3
+        assert all('No new jobs today above score 40' in m for m in chat)
+        assert not any(t in m for m in chat for t in ('Board Role', 'Aggregator Role', 'Home Role'))
         assert sent_history_count(db) == 0
 
     def test_a_day_with_jobs_sends_no_quiet_note(self, db, chat, monkeypatch):
         monkeypatch.setattr(Config, 'DIGEST_MIN_SCORE', 40.0)
         add(db, 'Aggregator Role', 'Co B', 55.0)
         telegram_sender.main()
-        assert chat and not any('No job cleared the score bar' in m for m in chat)
+        assert any('Aggregator Role' in m for m in chat)
+        assert not any('Daily Job Digest' in m and 'No new jobs today' in m for m in chat)
 
     def test_the_quiet_note_carries_the_health_note(self, db, chat, monkeypatch):
         monkeypatch.setattr(Config, 'DIGEST_MIN_SCORE', 40.0)
         monkeypatch.setattr(telegram_sender, '_health_note',
                             lambda: '\n⚠️ <b>Source health</b>\n• Apify down\n')
         telegram_sender.main()
-        assert len(chat) == 1
-        assert 'No job cleared the score bar' in chat[0] and 'Apify down' in chat[0]
+        assert len(chat) == 3
+        assert 'No new jobs today' in chat[-1] and 'Apify down' in chat[-1]
 
 
 class TestRunLogScores:

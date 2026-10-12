@@ -14,6 +14,7 @@ the ones that will need tuning.
 import re
 from urllib.parse import urlsplit, urlunsplit, parse_qsl, urlencode
 
+from core.countries import is_remote_place, location_countries
 from core.multilingual import fold_diacritics
 
 # Query parameters that identify the referrer, not the job. Two URLs that
@@ -102,12 +103,20 @@ def canonical_url(url):
     return urlunsplit((parts.scheme.lower(), host, path, query, ''))
 
 
-def normalize_title(title):
+def _place_or_empty(part):
+    """A title part that names only a place or a remote label, or nothing."""
+    words = _PUNCT.sub(' ', part).strip()
+    return not words or is_remote_place(words) or bool(location_countries(words))
+
+
+def normalize_title(title, keep_qualifiers=False):
     """
     Reduce a job title to its comparable core.
 
     Removes bracketed content, employment type words, gender markers and
-    punctuation, then collapses whitespace.
+    punctuation, then collapses whitespace. A part after " - " or " | " is
+    dropped, unless keep_qualifiers is set, when only a place or an empty
+    part is dropped.
 
     >>> normalize_title('Senior Sales Engineer (Remote, m/w/d) - Full-time')
     'senior sales engineer'
@@ -120,8 +129,14 @@ def normalize_title(title):
     for pattern in _TITLE_NOISE_PATTERNS:
         text = re.sub(pattern, ' ', text, flags=re.IGNORECASE)
 
-    # Drop a trailing location or qualifier after a dash or pipe.
-    text = re.split(r'\s+[-–—|]\s+', text)[0]
+    # A part after a dash or pipe. By default it is dropped, as a trailing
+    # location or qualifier. With keep_qualifiers it is dropped only when it
+    # names a place or is empty once the noise is gone, see dedup_key.
+    head, *rest = re.split(r'\s+[-–—|]\s+', text)
+    if keep_qualifiers:
+        text = ' '.join([head] + [part for part in rest if not _place_or_empty(part)])
+    else:
+        text = head
 
     text = _PUNCT.sub(' ', text)
     return _WHITESPACE.sub(' ', text).strip()
@@ -162,8 +177,14 @@ def dedup_key(title, company):
 
     Two postings sharing this key are the same job as far as the digest is
     concerned, whatever URL or title decoration they arrived with.
+
+    The part after a dash is kept unless it names a place. "Project Engineer
+    - Calculation" and "Project Engineer - Mechanical" at one company used to
+    share the key "project engineer": the second was dropped as a duplicate
+    in the run, or merged into the first one's row, or held back as a repeat
+    once the first was sent. At a large employer that hid most openings.
     """
-    return f"{normalize_title(title)}|{normalize_company(company)}"
+    return f"{normalize_title(title, keep_qualifiers=True)}|{normalize_company(company)}"
 
 
 def history_key(title, company):
@@ -272,8 +293,8 @@ def title_similarity(a, b):
     normalisation but still describe one job, for example
     "Sales Engineer Industrial" and "Industrial Sales Engineer".
     """
-    tokens_a = set(normalize_title(a).split())
-    tokens_b = set(normalize_title(b).split())
+    tokens_a = set(normalize_title(a, keep_qualifiers=True).split())
+    tokens_b = set(normalize_title(b, keep_qualifiers=True).split())
 
     if not tokens_a or not tokens_b:
         return 0.0

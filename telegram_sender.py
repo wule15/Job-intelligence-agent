@@ -1027,6 +1027,23 @@ def format_quiet_day_note(main_bar, regional_bar):
             f"regional {_fmt_score(regional_bar)}).")
 
 
+def format_empty_section(icon, header, bar):
+    """
+    The message a digest sends when it has no job today.
+
+    Every digest sends a message every run, so an empty section reads as
+    "nothing cleared the bar" rather than looking like a section that broke.
+    """
+    label = f" {Config.DIGEST_LABEL}" if Config.DIGEST_LABEL else ""
+    return (f"{icon} <b>{html.escape(header)}</b>{html.escape(label)}\n"
+            f"<i>{datetime.now().strftime('%Y-%m-%d %H:%M')}</i>\n\n"
+            f"No new jobs today above score {_fmt_score(bar)}.")
+
+
+def _regional_configured():
+    return bool(Config.REGIONAL_MATCH_TERMS or Config.REGIONAL_JOB_LOCATIONS)
+
+
 def _fmt_score(value):
     """A score for the run log: 40 rather than 40.0, 32.8 kept as it is."""
     try:
@@ -1093,6 +1110,8 @@ def main():
             print("[!] Direct digest failed to send - not marking those jobs sent")
     else:
         print("[*] No direct-from-company jobs today")
+        send_telegram_message(format_empty_section(
+            '🏢', 'Direct company openings', Config.DIGEST_MIN_SCORE))
 
     # Regional (home-market) digest goes next, and like the direct one marks its
     # jobs sent before the main digest is selected, so a regional job is never
@@ -1110,6 +1129,10 @@ def main():
             print("[!] Regional digest failed to send - not marking those jobs sent")
     else:
         print("[*] No regional jobs today")
+        if _regional_configured():
+            send_telegram_message(format_empty_section(
+                '🌍', Config.REGIONAL_DIGEST_LABEL or 'Regional jobs',
+                Config.REGIONAL_MIN_SCORE))
 
     print("[*] Fetching unsent jobs...")
     jobs = get_unsent_jobs(limit=10, is_live=is_job_live)
@@ -1123,17 +1146,12 @@ def main():
     health = _health_note()
 
     if not job_ids:
+        # Like the other two digests, an empty main digest still sends its
+        # message, with the health note if there is one, so a quiet day is
+        # not mistaken for a run that never happened.
         print("[*] No new jobs to send")
-        if not direct and not regional:
-            # Nothing cleared the bar in any digest. One short line, with the
-            # health note if there is one, so a quiet day is not mistaken for
-            # a run that never happened.
-            print("[*] No job cleared the score bar today")
-            send_telegram_message(format_quiet_day_note(
-                Config.DIGEST_MIN_SCORE, Config.REGIONAL_MIN_SCORE) + health.rstrip())
-        elif health:
-            print("[*] Sending source health note...")
-            send_telegram_message(health.strip())
+        send_telegram_message(format_empty_section(
+            '🔍', 'Daily Job Digest', Config.DIGEST_MIN_SCORE) + health.rstrip())
         return
 
     digest += health
