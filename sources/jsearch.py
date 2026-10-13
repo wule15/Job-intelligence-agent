@@ -6,12 +6,29 @@ Searches real jobs from LinkedIn, Indeed, Glassdoor, etc.
 import requests
 from datetime import datetime
 from core.config import Config
+from core.countries import iso_name, with_countries
 from core.database import Database
 from core.job_filter import JobFilter
 from core.utils import setup_logging
 import os
 
 logger = setup_logging('sources.jsearch')
+
+
+def jsearch_location(job_data):
+    """
+    City, state and country from a JSearch result, with "Remote" in front
+    for a remote job: "Remote (United States)", "Palo Alto, CA".
+
+    The location used to be the city alone. A remote job has no city, so it
+    was stored with an empty location, read as open worldwide, and US-only
+    roles reached the digest.
+    """
+    place = ', '.join(p for p in (job_data.get('job_city'), job_data.get('job_state')) if p)
+    if job_data.get('job_is_remote'):
+        place = f"Remote, {place}" if place else 'Remote'
+    code = job_data.get('job_country') or ''
+    return with_countries(place, [iso_name(code) or code])
 
 class JSearchJobScraper:
     """Search jobs using JSearch API."""
@@ -99,7 +116,7 @@ class JSearchJobScraper:
                             'company': job_data.get('employer_name', ''),
                             'description': job_data.get('job_description', ''),
                             'link': job_data.get('job_apply_link', ''),
-                            'location': job_data.get('job_city', ''),
+                            'location': jsearch_location(job_data),
                             'salary_min': job_data.get('job_salary_min'),
                             'salary_max': job_data.get('job_salary_max'),
                             'salary_currency': job_data.get('job_salary_currency'),

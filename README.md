@@ -147,8 +147,13 @@ FILTER
   The allow-list reads the location field. A location that names no country
   is left to the text rules, and a remote job whose advert says it is open
   worldwide is kept. A remote or "Anywhere" job that names the one country
-  it is remote in ("United States - Remote", or a link ending
-  "-united-states-remote") is judged by that country. The required-language
+  it is remote in ("United States - Remote", "available from: United
+  States", or a country spelled out in the link) is judged by that country.
+  Google Jobs has no worldwide search: its remote pass searches the United
+  States, so a result labelled "Anywhere" is stored as "Anywhere (United
+  States)". A country-market result whose location names no country gets
+  that market's country, and JSearch locations carry city, state and
+  country. The required-language
   check drops an advert that asks for a listed language fluent or at C1
   (or, in German, "sichere" or better), and keeps B1, B2 and "a plus". The
   advert-language check reads the advert's common words and drops one
@@ -358,7 +363,7 @@ Python 3.10 or newer: the code uses 3.10 syntax, and the pinned `ddgs` release r
 | Tests | pytest |
 | Normalisation | standard library only, `re` and `urllib.parse` |
 
-1103 tests, covering scoring, filtering, title rules, work eligibility, language rules, deduplication, storage, the send history, the pre-send liveness check, source health, digest composition and volume, the scam screen, the SSRF guard on link checking, retry policy, the Cloud Run wrapper, local-language scoring and three regressions that each cost real results. Tests run against fixtures and temporary files, and no test makes a network call.
+1158 tests, covering scoring, filtering, title rules, work eligibility, language rules, deduplication, storage, the send history, the pre-send liveness check, source health, digest composition and volume, the scam screen, the SSRF guard on link checking, retry policy, the Cloud Run wrapper, local-language scoring and three regressions that each cost real results. Tests run against fixtures and temporary files, and no test makes a network call.
 
 One file, `tests/test_end_to_end.py`, runs a whole day through the real pipeline in order: search, dedup, description fetch, scoring, storage, digest selection and sending. Every network call is replaced: fake job boards (one of which crashes), a fixed advert page for the description fetch, a link check that always answers "live", a temporary database, and Telegram's HTTP call captured instead of sent. It then checks what would have reached the chat: the strong match is there once, the weak match and the dealbreaker are not, the local-language advert lands in the regional message, the crashing source is named, nothing repeats the next day, a job reposted under a new link after the cleanup is not sent again, every sent job is logged with its full link, and a failed send goes out the next day. The duplicate check tests three dedup layers together, so switching off one layer does not fail it.
 
@@ -432,7 +437,7 @@ Or point `MASTER_CV_PATH` in `core/.env` at another file. Fill in the `variants:
 
 ```bash
 pip install -r requirements-dev.txt
-python -m pytest              # 1103 tests, no network
+python -m pytest              # 1158 tests, no network
 python job_search_smart.py    # one real run: search, score, store
 python telegram_sender.py     # send the digest
 ```

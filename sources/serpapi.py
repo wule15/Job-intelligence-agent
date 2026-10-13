@@ -22,6 +22,7 @@ import time
 import requests
 from core.utils import setup_logging
 from core.config import Config
+from core.countries import location_countries, with_countries
 
 logger = setup_logging('sources.serpapi')
 
@@ -43,8 +44,21 @@ MARKETS = {
 }
 
 
-def _normalise(raw_jobs, fallback_location='Remote'):
-    """Turn SerpApi google_jobs items into the agent's job dict shape."""
+def _placed(location, country):
+    """The location, with the searched country added when it names none."""
+    if not country or location_countries(location) - {'WORLDWIDE'}:
+        return location
+    return with_countries(location, [country])
+
+
+def _normalise(raw_jobs, fallback_location='Remote', country=''):
+    """
+    Turn SerpApi google_jobs items into the agent's job dict shape.
+
+    country: the country the search ran in, added to a location that names
+    none. Google writes "Anywhere" for a remote job in the searched country,
+    or a bare city, so without it a US remote job read as worldwide.
+    """
     jobs = []
     for item in raw_jobs:
         salary = item.get('detected_extensions', {}).get('salary')
@@ -66,7 +80,7 @@ def _normalise(raw_jobs, fallback_location='Remote'):
             'description': desc[:8000],  # requirements come last, see free_boards
             'link':        apply_link,
             'salary':      salary,
-            'location':    item.get('location', fallback_location),
+            'location':    _placed(item.get('location') or fallback_location, country),
             'source':      'Google Jobs',
         })
     return jobs
@@ -107,12 +121,16 @@ def search_google_jobs(query, market=None, num_results=10):
         params['hl'] = market['hl']
         label = f"{query!r} @ {market['location']}"
     else:
-        # Fully-remote-anywhere pass. Google Jobs rejects location='Remote', so
-        # use ltype=1 (its work-from-home filter) with no location; results come
-        # back as "Anywhere". The downstream work-eligibility filter then keeps
-        # only the ones open worldwide / no-permit / with sponsorship.
+        # Remote pass. Google Jobs rejects location='Remote', so use ltype=1
+        # (its work-from-home filter) with no location. Google has no worldwide
+        # search: with no country it searches the United States, so gl says so
+        # and the results, labelled "Anywhere", are tagged as US. The
+        # work-eligibility filter then keeps only the ones open worldwide or
+        # offering sponsorship. Before 13.10 they read as worldwide and filled
+        # the main digest with US-only roles.
         params['q'] = query
         params['ltype'] = '1'
+        params['gl'] = 'us'
         params['hl'] = 'en'
         label = f"{query!r} @ remote (anywhere)"
 
@@ -135,8 +153,9 @@ def search_google_jobs(query, market=None, num_results=10):
             logger.warning(f"[SerpAPI] {label}: {data['error']}")
             return []
 
+        country = market['location'] if market else 'United States'
         jobs = _normalise(data.get('jobs_results', []),
-                          fallback_location=market['location'] if market else 'Remote')
+                          fallback_location='' if market else 'Remote', country=country)
         logger.info(f"[SerpAPI] {label} -> {len(jobs)} jobs")
         return jobs
 

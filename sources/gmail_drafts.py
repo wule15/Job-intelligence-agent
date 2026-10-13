@@ -23,7 +23,11 @@ class GmailDraftJobExtractor:
         self.filter = JobFilter()
 
     def connect_gmail(self):
-        """Connect to Gmail IMAP."""
+        """Connect to Gmail IMAP. None, quietly, when no login is configured,
+        as in the cloud, which holds no Gmail secret."""
+        if not (Config.GMAIL_USER and Config.GMAIL_APP_PASSWORD):
+            logger.info("Gmail drafts skipped: GMAIL_USER or GMAIL_APP_PASSWORD not set")
+            return None
         try:
             mail = imaplib.IMAP4_SSL(Config.GMAIL_IMAP_HOST, Config.GMAIL_IMAP_PORT)
             mail.login(Config.GMAIL_USER, Config.GMAIL_APP_PASSWORD)

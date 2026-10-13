@@ -498,17 +498,27 @@ _REMOTE_BOUND = re.compile(
     r'([a-z][a-z .]{1,40}?)\s*[-\u2013\u2014]\s*remote\b'
     r'|\bremote\s*[-\u2013\u2014(:]\s*([a-z][a-z .]{1,40})')
 
+# Jobgether, a reposting board Google Jobs carries, ends each advert with "The
+# offer is available from: United States". Its jobs arrive labelled "Anywhere".
+_AVAILABLE_FROM = re.compile(r'\bavailable from:\s*([a-z][a-z ,.]{1,80})')
+
 
 def remote_countries(text, link=''):
     """
     The countries a remote job says it is remote in, from the advert text
     and the link's path, as country codes. Empty when it names none.
+
+    A country spelled out anywhere in the path counts too: JobLeads writes
+    ".../remote-hydro-mechanical-engineer--united-states--e9d8...". Only full
+    names are read there, never two-letter codes or cities, which a path
+    carries for other reasons ("/us/en/" on a German job).
     """
     found = set()
     windows = [fold_diacritics(text or '')]
     path = urlparse(link or '').path if link else ''
     if path:
         words = re.split(r'[/_\-.]+', fold_diacritics(path))
+        found |= _named_codes(' '.join(words), cities=False)
         for i, word in enumerate(words):
             if word == 'remote':
                 windows.append(' '.join(words[max(0, i - 3):i]))
@@ -517,6 +527,8 @@ def remote_countries(text, link=''):
         found |= _named_codes(window)
     for match in _REMOTE_BOUND.finditer(windows[0]):
         found |= _named_codes(match.group(1) or match.group(2))
+    for match in _AVAILABLE_FROM.finditer(windows[0]):
+        found |= _named_codes(match.group(1), cities=False)
     return {code for code in found if code in COUNTRY_NAMES}
 
 
