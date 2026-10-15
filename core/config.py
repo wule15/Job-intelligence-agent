@@ -59,6 +59,41 @@ def score_setting(raw, default, name=''):
     return min(100.0, max(0.0, value))
 
 
+def count_setting(raw, default, name=''):
+    """
+    A slot count as a whole number of at least 1.
+
+    Blank gives the default. A value that is not a whole number also gives the
+    default, with one printed warning, so a typo in .env cannot stop the
+    scheduled morning run. Zero or less is raised to 1.
+    """
+    if raw is None or not str(raw).strip():
+        return int(default)
+    try:
+        return max(1, int(str(raw).strip()))
+    except ValueError:
+        print(f"[!] {name or 'Count setting'} is not a whole number, using {default}")
+        return int(default)
+
+
+def factor_setting(raw, default, name=''):
+    """
+    A score multiplier between 1.0 and 2.0.
+
+    Blank gives the default. A value that is not a number also gives the
+    default, with one printed warning. A number outside 1.0 to 2.0 is clamped,
+    so the setting can lift a job but never sink one.
+    """
+    if raw is None or not str(raw).strip():
+        return float(default)
+    try:
+        value = float(str(raw).strip())
+    except ValueError:
+        print(f"[!] {name or 'Factor setting'} is not a number, using {default:g}")
+        return float(default)
+    return min(2.0, max(1.0, value))
+
+
 def flag_setting(raw):
     """An on/off setting. On only for 1, true, yes or on, in any case."""
     return str(raw or '').strip().lower() in ('1', 'true', 'yes', 'on')
@@ -256,6 +291,24 @@ class Config:
     DIGEST_MIN_SCORE = score_setting(os.getenv("DIGEST_MIN_SCORE"), 15.0, "DIGEST_MIN_SCORE")
     REGIONAL_MIN_SCORE = score_setting(
         os.getenv("REGIONAL_MIN_SCORE"), DIGEST_MIN_SCORE, "REGIONAL_MIN_SCORE")
+    # DIRECT_MIN_SCORE covers the direct-company digest. It is separate because
+    # company-board adverts are mostly on-site or hybrid, which the remote
+    # preference marks down, so they score lower than remote-board adverts for
+    # the same fit. None when blank: the digest then uses DIGEST_MIN_SCORE,
+    # read when it runs (telegram_sender.direct_min_score).
+    DIRECT_MIN_SCORE = (
+        score_setting(os.getenv("DIRECT_MIN_SCORE"), DIGEST_MIN_SCORE, "DIRECT_MIN_SCORE")
+        if (os.getenv("DIRECT_MIN_SCORE") or '').strip() else None)
+    # Slots in the main digest, a ceiling like every slot count. Blank means 10.
+    MAIN_DIGEST_SIZE = count_setting(
+        os.getenv("MAIN_DIGEST_SIZE"), 10, "MAIN_DIGEST_SIZE")
+    # Employers to rank higher, comma separated, each matched as whole words
+    # in the company name ("atlas copco" matches "Atlas Copco Group"). Their
+    # jobs are multiplied by PRIORITY_COMPANY_BOOST, 1.0 to 2.0. Both empty by
+    # default, so the public engine prefers no employer.
+    PRIORITY_COMPANIES = term_list(os.getenv("PRIORITY_COMPANIES"))
+    PRIORITY_COMPANY_BOOST = factor_setting(
+        os.getenv("PRIORITY_COMPANY_BOOST"), 1.0, "PRIORITY_COMPANY_BOOST")
     # Adds graduate, junior, trainee, associate and intern queries for the
     # engineering and sales tracks the CV supports, one of them rotated to the
     # head of the list each day. Off by default.

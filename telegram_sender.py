@@ -42,8 +42,9 @@ MAX_PER_COMPANY = 2
 # the highest-signal jobs, not a second full feed.
 DIRECT_DIGEST_SIZE = 10
 
-# The score bar comes from .env: DIGEST_MIN_SCORE for the main and direct
-# digests, REGIONAL_MIN_SCORE for the regional one. The default of 15 sits one
+# The score bar comes from .env: DIGEST_MIN_SCORE for the main digest,
+# DIRECT_MIN_SCORE for the direct one and REGIONAL_MIN_SCORE for the regional
+# one, the last two falling back to the first. The default of 15 sits one
 # step above the storage cutoff (MIN_RELEVANCE_SCORE = 10), because worth
 # keeping on the dashboard is a lower bar than worth a Telegram message. At 15
 # almost every stored job qualified, so the slot counts, not the bar, set the
@@ -687,6 +688,12 @@ def get_unsent_jobs(limit=DIGEST_SIZE, min_score=None, is_live=None):
     # from. Returns (id, title, company, score, link, best_cv, source) tuples.
     return [job[:8] for job in selected]
 
+def direct_min_score():
+    """The direct digest's bar: DIRECT_MIN_SCORE when set, else DIGEST_MIN_SCORE."""
+    if Config.DIRECT_MIN_SCORE is not None:
+        return Config.DIRECT_MIN_SCORE
+    return Config.DIGEST_MIN_SCORE
+
 def get_direct_jobs(limit=DIRECT_DIGEST_SIZE, min_score=None, is_live=None):
     """
     The direct-from-company shortlist: unsent jobs from company careers boards
@@ -697,19 +704,19 @@ def get_direct_jobs(limit=DIRECT_DIGEST_SIZE, min_score=None, is_live=None):
     company's recruiter, not an aggregator's copy. They get their own message
     so aggregator volume cannot bury them.
 
-    Same score gate and per-company cap as the main digest, so a slot is never
-    padded with a weak match. An empty result is normal, and the run says so
-    rather than sending a filler message.
+    Same per-company cap as the main digest, and its own score gate, so a slot
+    is never padded with a weak match. An empty result is normal, and the run
+    says so rather than sending a filler message.
 
     is_live works as in get_unsent_jobs: a job it proves closed gives its slot
     to the next one, and None (the default) makes no network call.
 
-    min_score left None means Config.DIGEST_MIN_SCORE, read now.
+    min_score left None means direct_min_score(), read now.
 
     Returns (id, title, company, score, link, best_cv, source, scam_risk) tuples.
     """
     if min_score is None:
-        min_score = Config.DIGEST_MIN_SCORE
+        min_score = direct_min_score()
     sources = list(ATS_SOURCES)
     try:
         conn = sqlite3.connect(Config.DATABASE_PATH)
@@ -1078,8 +1085,10 @@ def main():
     force_utf8_streams()  # Serbian job titles must not crash a cp1252 console/log
     print("[*] Initializing Telegram tracking...")
     init_telegram_tracking()
-    print(f"[*] Score bar: main/direct {_fmt_score(Config.DIGEST_MIN_SCORE)}, "
-          f"regional {_fmt_score(Config.REGIONAL_MIN_SCORE)}")
+    print(f"[*] Score bar: main {_fmt_score(Config.DIGEST_MIN_SCORE)}, "
+          f"direct {_fmt_score(direct_min_score())}, "
+          f"regional {_fmt_score(Config.REGIONAL_MIN_SCORE)}; "
+          f"main digest up to {Config.MAIN_DIGEST_SIZE} jobs")
 
     # Before any digest is chosen: hold back jobs already sent on an earlier
     # day, and jobs on the private list of ones handled elsewhere.
@@ -1111,7 +1120,7 @@ def main():
     else:
         print("[*] No direct-from-company jobs today")
         send_telegram_message(format_empty_section(
-            '🏢', 'Direct company openings', Config.DIGEST_MIN_SCORE))
+            '🏢', 'Direct company openings', direct_min_score()))
 
     # Regional (home-market) digest goes next, and like the direct one marks its
     # jobs sent before the main digest is selected, so a regional job is never
@@ -1135,7 +1144,7 @@ def main():
                 Config.REGIONAL_MIN_SCORE))
 
     print("[*] Fetching unsent jobs...")
-    jobs = get_unsent_jobs(limit=10, is_live=is_job_live)
+    jobs = get_unsent_jobs(limit=Config.MAIN_DIGEST_SIZE, is_live=is_job_live)
     _log_selected('main', jobs)
     _report_liveness()
 

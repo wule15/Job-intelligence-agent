@@ -681,6 +681,26 @@ class SmartJobSearcher:
             if job.get('link'):
                 print(f"   Link: {job['link']}")
 
+        # Every job that passed, one line each. The digest sends only what
+        # clears its score bars and slots, and the rest wait in the database,
+        # so this is the record of what else came in, readable from the run
+        # log alone. Same order as above, best score first.
+        print("\n" + "="*70)
+        print(f"ALL {len(jobs)} JOBS THAT PASSED THE FILTERS")
+        print("="*70)
+        for job in jobs:
+            print(passed_line(job))
+
+
+def passed_line(job):
+    """One log line for a job that passed the filters:
+    "[passed] score=S | source | title | company | location | link"."""
+    fields = [job.get('source') or 'Unknown', job.get('title') or '',
+              job.get('company') or '', job.get('location') or '-',
+              job.get('link') or '-']
+    fields = [' '.join(str(f).split()) for f in fields]
+    return f"[passed] score={job.get('relevance_score', 0)} | " + ' | '.join(fields)
+
 
 def main():
     """Run smart job search."""

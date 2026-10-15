@@ -1794,6 +1794,28 @@ def flow_equipment_multiplier(job: dict) -> float:
     return 1.0
 
 
+# ── Priority employers ────────────────────────────────────────────────────────
+# Employers the user wants to see more of, named in Config.PRIORITY_COMPANIES
+# and lifted by Config.PRIORITY_COMPANY_BOOST. Matched on the company name only,
+# as whole words, so a job that merely mentions the employer is not lifted.
+# Stacks with the flow-equipment lift for a maker on both lists. Empty by
+# default.
+def is_priority_company(company: str, names=None) -> bool:
+    """True when the company name contains one of the priority employers."""
+    if names is None:
+        names = Config.PRIORITY_COMPANIES
+    company = fold_diacritics((company or '').lower())
+    return any(re.search(r'\b' + re.escape(fold_diacritics(name)) + r'\b', company)
+               for name in names)
+
+
+def priority_company_multiplier(job: dict) -> float:
+    """PRIORITY_COMPANY_BOOST for a priority employer, 1.0 for everything else."""
+    if is_priority_company(job.get('company', '')):
+        return Config.PRIORITY_COMPANY_BOOST
+    return 1.0
+
+
 # ── Target role keywords, presence in title boosts score ────────────────────
 TITLE_BOOST_KEYWORDS = [
     'sales engineer', 'technical sales', 'pre-sales', 'presales',
@@ -2339,11 +2361,13 @@ class JobFilter:
                 # Lift roles that explicitly offer visa sponsorship, so the
                 # takeable-without-a-permit ones rise above equally scored jobs.
                 multiplier *= sponsorship_multiplier(job)
-                # Required experience, the crowding aggregators and flow-equipment
-                # roles only reorder. None of them drops a job.
+                # Required experience, the crowding aggregators, flow-equipment
+                # roles and priority employers only reorder. None of them drops
+                # a job.
                 multiplier *= experience_multiplier(job)
                 multiplier *= source_priority_multiplier(job)
                 multiplier *= flow_equipment_multiplier(job)
+                multiplier *= priority_company_multiplier(job)
                 # Suspected scam: sink it and mark it, but do not delete, since
                 # this is a heuristic. The digest recomputes the flag to warn.
                 if scam_risk(title, description, company, job.get('link', '')):

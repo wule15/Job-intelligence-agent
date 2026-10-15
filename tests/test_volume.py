@@ -228,7 +228,8 @@ class TestRunLogScores:
         telegram_sender.main()
         bar_lines = [l for l in capsys.readouterr().out.splitlines()
                      if l.startswith('[*] Score bar')]
-        assert bar_lines == ['[*] Score bar: main/direct 30, regional 22.5']
+        assert bar_lines == ['[*] Score bar: main 30, direct 30, regional 22.5; '
+                             'main digest up to 10 jobs']
 
 
 # ── Entry-level software keeps up with the regional bar ─────────────────────

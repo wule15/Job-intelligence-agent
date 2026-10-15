@@ -168,11 +168,14 @@ SCORE
   Each job is scored against every CV separately. Best CV wins and is
   recorded. A target role in the title and an industrial or B2B sector word
   lift the score toward 100. Location, remote, sponsorship, experience,
-  source and flow-equipment multipliers then move it. Softer scam signals
+  source, flow-equipment and priority-employer (PRIORITY_COMPANIES)
+  multipliers then move it. Softer scam signals
   (apply by WhatsApp, pay-to-work fees) push it far down and flag the job,
   so the digest warns before you apply. A Serbian or German advert gains
   the English equivalents of the terms it uses, from a small glossary, so
   it is scored on meaning rather than on how much English it contains.
+  The run log lists every job that passed, one "[passed] score=S | ..."
+  line each, so the ones the digest does not send can still be read.
   A job scoring under 10 before the multipliers is not stored, except
   hand-saved jobs and entry-level software from the local board. Of the
   jobs left, two at one company whose adverts print the same posting
@@ -199,14 +202,16 @@ DELIVER (telegram_sender.py)
     Regional                  jobs whose location names a REGIONAL_MATCH_TERMS
                               term as a whole word, accents ignored, up to 15,
                               with its own bar, REGIONAL_MIN_SCORE
-    Main digest               up to 10. Hand-saved jobs first, with no score
-                              bar. Then company boards and quality
-                              aggregators compete on score. Indeed, JSearch
-                              and WeWorkRemotely only fill slots still empty
+    Main digest               up to 10, or MAIN_DIGEST_SIZE. Hand-saved
+                              jobs first, with no score bar. Then company
+                              boards and quality aggregators compete on
+                              score. Indeed, JSearch and WeWorkRemotely only
+                              fill slots still empty
   At most 2 jobs per employer in each message, hand-saved jobs aside. Every
   other slot must clear its message's score bar: DIGEST_MIN_SCORE (default
-  15) for the main and direct messages, REGIONAL_MIN_SCORE (default the
-  same) for the regional one. A thin day sends fewer jobs, and a day when no
+  15) for the main message, DIRECT_MIN_SCORE and REGIONAL_MIN_SCORE (both
+  defaulting to the same) for the other two. MAIN_DIGEST_SIZE sets the main
+  message's slots. A thin day sends fewer jobs, and a day when no
   message has a job sends one short note naming the bars.
   Before a job is sent its posting is checked, unless it was saved by hand:
   company-board jobs against the vendor's API (Greenhouse, Lever, Ashby,
@@ -363,7 +368,7 @@ Python 3.10 or newer: the code uses 3.10 syntax, and the pinned `ddgs` release r
 | Tests | pytest |
 | Normalisation | standard library only, `re` and `urllib.parse` |
 
-1158 tests, covering scoring, filtering, title rules, work eligibility, language rules, deduplication, storage, the send history, the pre-send liveness check, source health, digest composition and volume, the scam screen, the SSRF guard on link checking, retry policy, the Cloud Run wrapper, local-language scoring and three regressions that each cost real results. Tests run against fixtures and temporary files, and no test makes a network call.
+1182 tests, covering scoring, filtering, title rules, work eligibility, language rules, deduplication, storage, the send history, the pre-send liveness check, source health, digest composition and volume, the scam screen, the SSRF guard on link checking, retry policy, the Cloud Run wrapper, local-language scoring and three regressions that each cost real results. Tests run against fixtures and temporary files, and no test makes a network call.
 
 One file, `tests/test_end_to_end.py`, runs a whole day through the real pipeline in order: search, dedup, description fetch, scoring, storage, digest selection and sending. Every network call is replaced: fake job boards (one of which crashes), a fixed advert page for the description fetch, a link check that always answers "live", a temporary database, and Telegram's HTTP call captured instead of sent. It then checks what would have reached the chat: the strong match is there once, the weak match and the dealbreaker are not, the local-language advert lands in the regional message, the crashing source is named, nothing repeats the next day, a job reposted under a new link after the cleanup is not sent again, every sent job is logged with its full link, and a failed send goes out the next day. The duplicate check tests three dedup layers together, so switching off one layer does not fail it.
 
@@ -437,7 +442,7 @@ Or point `MASTER_CV_PATH` in `core/.env` at another file. Fill in the `variants:
 
 ```bash
 pip install -r requirements-dev.txt
-python -m pytest              # 1158 tests, no network
+python -m pytest              # 1182 tests, no network
 python job_search_smart.py    # one real run: search, score, store
 python telegram_sender.py     # send the digest
 ```
@@ -556,7 +561,7 @@ _Screenshot from August 2026, before senior titles were dropped and before each 
 
 Up to ten jobs in the main digest, up to ten in the direct-from-company shortlist and up to fifteen in the regional message, at most two per employer in each. Every job carries its score, its source and the CV that scored it.
 
-The percentages are a ranking device, not a probability. A score starts as the count of that CV's skill terms found in the job text, over a denominator capped at 25. A target role in the title lifts it part of the way to 100, but only when the advert alone already matches at least 20 percent, or when there is no advert text at all. An industrial or B2B sector word in the advert lifts it again, with no such condition. Location, remote, sponsorship, experience, source and flow-equipment multipliers then move it up or down, a suspected scam is pushed down, and the result is capped at 100. So for a CV with 25 or more skills, in an advert that names a target sector, one matched term scores about 33 before the multipliers, each further term adds about 3, and 40 means three or four terms matched, not that the job is a 40 percent fit. It exists to order the list and to apply the score bar, and the known weaknesses section below lists what it cannot see.
+The percentages are a ranking device, not a probability. A score starts as the count of that CV's skill terms found in the job text, over a denominator capped at 25. A target role in the title lifts it part of the way to 100, but only when the advert alone already matches at least 20 percent, or when there is no advert text at all. An industrial or B2B sector word in the advert lifts it again, with no such condition. Location, remote, sponsorship, experience, source, flow-equipment and priority-employer multipliers then move it up or down, a suspected scam is pushed down, and the result is capped at 100. So for a CV with 25 or more skills, in an advert that names a target sector, one matched term scores about 33 before the multipliers, each further term adds about 3, and 40 means three or four terms matched, not that the job is a 40 percent fit. It exists to order the list and to apply the score bar, and the known weaknesses section below lists what it cannot see.
 
 ---
 
