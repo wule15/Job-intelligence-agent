@@ -898,6 +898,26 @@ def is_outside_allowed_countries(job: dict, allowed=None, sponsorship_only=None,
     return bool(allowed_set)
 
 
+def is_applicant_restricted(codes, allowed=None) -> bool:
+    """
+    True when a remote job's page limits the hire to countries the user
+    cannot take, given the codes core.countries.applicant_countries read
+    from it.
+
+    A visa offer does not change the answer, so a sponsorship-only country
+    counts as outside here: the page says where a remote hire must already
+    live, and no visa moves the user there. Empty codes, an unknown limit,
+    are never restricted. Inert while ALLOWED_COUNTRIES is empty, as in the
+    public default.
+    """
+    if allowed is None:
+        allowed = Config.ALLOWED_COUNTRIES
+    allowed_set = expand_codes(allowed)
+    if not codes or not allowed_set:
+        return False
+    return not (set(codes) & allowed_set)
+
+
 def fails_eligibility(title, description, location, link=''):
     """
     The first hard rule a job breaks, as the filter's reason name, or None.

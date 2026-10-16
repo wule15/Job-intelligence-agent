@@ -33,6 +33,7 @@ Rules, in the order they matter:
 Standard library only.
 """
 
+import json
 import re
 from urllib.parse import urlparse
 
@@ -555,3 +556,74 @@ def with_countries(location, countries):
     if not location.strip() or location.strip().lower() == 'not stated':
         return ', '.join(missing)
     return f"{location} ({', '.join(missing)})"
+
+
+# The schema.org JobPosting block a job page carries for search engines. For a
+# remote job (jobLocationType TELECOMMUTE), applicantLocationRequirements says
+# where the hire must live. RemoteOK, We Work Remotely, Jobicy and jobmesh all
+# fill it in, while their feeds and listings often say only "Remote".
+_LD_JSON = re.compile(
+    r'<script[^>]*application/ld\+json[^>]*>(.*?)</script>', re.S | re.I)
+
+
+def _job_postings(page_html):
+    """Every JobPosting object in a page's JSON-LD blocks."""
+    found = []
+    for block in _LD_JSON.findall(page_html or ''):
+        try:
+            # strict=False: We Work Remotely leaves raw line breaks in strings.
+            data = json.loads(block.strip(), strict=False)
+        except ValueError:
+            continue
+        stack = [data]
+        while stack:
+            item = stack.pop()
+            if isinstance(item, list):
+                stack.extend(item)
+            elif isinstance(item, dict):
+                kind = item.get('@type')
+                if kind == 'JobPosting' or (isinstance(kind, list) and 'JobPosting' in kind):
+                    found.append(item)
+                elif '@graph' in item:
+                    stack.append(item['@graph'])
+    return found
+
+
+def _requirement_codes(entry):
+    """The codes one applicantLocationRequirements entry names. A two-letter
+    name is read as an ISO code ("US", "GB"), anything else as a place."""
+    name = entry.get('name') if isinstance(entry, dict) else entry
+    name = (name or '').strip() if isinstance(name, str) else ''
+    if name.upper() == 'UK':
+        return {'GB'}
+    if re.fullmatch(r'[A-Za-z]{2}', name) and name.upper() in COUNTRY_NAMES:
+        return {name.upper()}
+    return location_countries(name)
+
+
+def applicant_countries(page_html):
+    """
+    Where a remote job's page says the hire must live, as country codes and
+    region tokens, read from its JobPosting data. KPI Solutions on RemoteOK
+    lists "Cincinnati" in the feed and "United States" here.
+
+    Empty means the page sets no limit this function can rely on: no
+    JobPosting block, a job that is not remote, or a list with an entry that
+    is worldwide ("Anywhere") or that this module cannot place. The caller
+    must treat empty as unknown, never as foreign.
+    """
+    codes = set()
+    for posting in _job_postings(page_html):
+        kind = posting.get('jobLocationType') or ''
+        kinds = kind if isinstance(kind, list) else [kind]
+        if not any(isinstance(k, str) and k.upper() == 'TELECOMMUTE' for k in kinds):
+            continue
+        entries = posting.get('applicantLocationRequirements') or []
+        if not isinstance(entries, list):
+            entries = [entries]
+        for entry in entries:
+            named = _requirement_codes(entry)
+            if not named or 'WORLDWIDE' in named:
+                return set()
+            codes |= named
+    return codes

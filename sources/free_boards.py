@@ -20,7 +20,7 @@ import requests
 import time
 from datetime import datetime
 from urllib.parse import quote
-from core.countries import expand_codes, iso_name, location_countries
+from core.countries import expand_codes, is_remote_place, iso_name, location_countries
 from core.utils import setup_logging
 
 logger = setup_logging('sources.free_boards')
@@ -92,6 +92,22 @@ def _pick_regional_queries(regional, cv_queries):
     return list(regional)[:REGIONAL_QUERY_CAP] or list(cv_queries)[:4]
 
 
+def remote_at(place):
+    """
+    A remote board's place as a location: "Remote, Germany", or "Remote"
+    when the board names none. A place that already says remote or
+    worldwide ("Remote - US", "Worldwide") is kept as it is.
+
+    The place is where the board says the hire may live. Kept next to
+    "Remote", the country allow-list can judge it, and a remote role named
+    for a European country still ranks as European.
+    """
+    place = (place or '').strip()
+    if not place:
+        return 'Remote'
+    return place if is_remote_place(place) else f"Remote, {place}"
+
+
 # ── RemoteOK ──────────────────────────────────────────────────────────────────
 
 def search_remoteok(keywords):
@@ -99,6 +115,11 @@ def search_remoteok(keywords):
     RemoteOK public API, https://remoteok.com/api
     Returns all remote jobs; we filter by keyword client-side.
     Free, no key, ~1 req/s polite limit.
+
+    The location comes from the API's own field, where the board says the
+    hire may live ("United States", "Remote - US", "Worldwide"), see
+    remote_at. Every job used to be stored as "Remote", so a US-only role
+    read as open worldwide and reached the digest.
     """
     logger.info("[RemoteOK] Fetching jobs...")
     data = _get('https://remoteok.com/api')
@@ -125,6 +146,7 @@ def search_remoteok(keywords):
             company=item.get('company', ''),
             description=desc,
             link=item.get('url', ''),
+            location=remote_at(item.get('location')),
             source='RemoteOK',
         ))
 
@@ -327,11 +349,23 @@ def search_jobicy(tag, count=50):
 
 # ── We Work Remotely ─────────────────────────────────────────────────────────
 
+def _wwr_country(raw):
+    """The feed's country without its flag emoji: "🇺🇸 United States of
+    America" becomes "United States of America". Empty when there is none."""
+    return re.sub(r'^[^A-Za-z]+', '', (raw or '').strip()).strip()
+
+
 def search_weworkremotely(keywords):
     """
     We Work Remotely RSS feed, https://weworkremotely.com/remote-jobs.rss
     Free, no key. High-quality curated remote listings.
     Client-side keyword filtering.
+
+    An item's country, when the feed gives one, is where the hire must live,
+    the same country its page's JobPosting data names, so the job is stored
+    as "Remote, <country>" (remote_at). Without a country it stays "Remote".
+    The region is not used: it reads "Anywhere in the World" even on a
+    US-only role.
     """
     logger.info("[WeWorkRemotely] Fetching RSS feed...")
     try:
@@ -363,11 +397,13 @@ def search_weworkremotely(keywords):
         if not any(k in text for k in kw_lower):
             continue
 
+        country = _wwr_country(item.findtext('country'))
         jobs.append(_job(
             title=job_title,
             company=company,
             description=desc,
             link=link,
+            location=remote_at(country),
             source='WeWorkRemotely',
         ))
 

@@ -17,10 +17,10 @@ from pathlib import Path
 
 from core import source_health
 from core.config import PROJECT_ROOT, Config
-from core.countries import COUNTRY_NAMES, location_countries
+from core.countries import COUNTRY_NAMES, applicant_countries, location_countries
 from core.job_filter import (
     ALWAYS_INCLUDE_SOURCES, content_drop_reason, fails_advert_language, fails_eligibility,
-    is_flow_equipment_role,
+    is_applicant_restricted, is_flow_equipment_role,
     matches_region, requires_unspoken_language, scam_risk, title_drop_reason,
 )
 from core.job_normalize import (
@@ -136,6 +136,12 @@ def _is_board_error_redirect(url):
             and 'true' in parse_qs(parts.query).get('error', []))
 
 
+# Filled by check_link_live as it reads each page: the countries the page
+# limits a remote hire to (core.countries.applicant_countries), by link.
+# is_job_live reads it, and reset_liveness empties it once per run.
+_PAGE_APPLICANTS = {}
+
+
 @lru_cache(maxsize=2048)
 def check_link_live(url, timeout=6):
     """
@@ -147,6 +153,10 @@ def check_link_live(url, timeout=6):
     Dropping a real job over a transient error is worse than letting one stale
     link through, so the check only removes what it can prove is dead. A link to
     a private/internal address is refused outright (see _is_internal_url).
+
+    A 200 page also has its JobPosting data read for where a remote hire
+    must live, kept in _PAGE_APPLICANTS for is_job_live. That costs no extra
+    request.
 
     Redirects are followed by hand, one hop at a time, so the internal-address
     guard is applied to every hop and not just the first, which is what closes
@@ -185,6 +195,7 @@ def check_link_live(url, timeout=6):
             return False
         if resp.status_code != 200:
             return True
+        _PAGE_APPLICANTS[url] = applicant_countries(resp.text)
         return not any(marker in resp.text.lower() for marker in EXPIRED_PAGE_MARKERS)
     return True  # too many redirects is not proof the job is gone
 
@@ -195,8 +206,9 @@ _liveness = {}
 def reset_liveness():
     """Start a fresh check budget and forget earlier answers. Once per run."""
     _liveness.clear()
-    _liveness.update(results={}, closed=[], closed_page=[], unverified=set(), checked=0,
-                     deadline=time.monotonic() + LIVENESS_BUDGET_SECS)
+    _liveness.update(results={}, closed=[], closed_page=[], restricted=[], unverified=set(),
+                     checked=0, deadline=time.monotonic() + LIVENESS_BUDGET_SECS)
+    _PAGE_APPLICANTS.clear()
     reset_liveness_caches()
 
 
@@ -218,6 +230,12 @@ def is_job_live(link, source='', company=''):
     listed under 'closed_page': the job is skipped today and checked again
     tomorrow, because the page check reads loose markers such as "no longer
     available" anywhere in the page.
+
+    A live page whose JobPosting data limits a remote hire to countries the
+    user cannot take (is_applicant_restricted) is not takeable either. It is
+    listed under 'restricted' and held back for good at the end of the run.
+    The feeds of RemoteOK and We Work Remotely often say only "Remote", so
+    the page is the first place the limit shows.
     """
     if source in ALWAYS_INCLUDE_SOURCES or not link:
         return True
@@ -237,6 +255,8 @@ def is_job_live(link, source='', company=''):
         if verdict is None:
             verdict = check_link_live(link)
             proven_by = 'closed_page'
+            if verdict is not False and is_applicant_restricted(_PAGE_APPLICANTS.get(link)):
+                verdict, proven_by = False, 'restricted'
         verdict = verdict is not False
         results[link] = verdict
         if not verdict:
@@ -249,12 +269,14 @@ def is_job_live(link, source='', company=''):
 
 def liveness_summary():
     """This run's checks so far: how many were made, the links the vendor
-    proved closed, the links only the page check read as closed, and how
-    many chosen jobs went unverified because the budget was spent."""
+    proved closed, the links only the page check read as closed, the links
+    whose page limits the hire to other countries, and how many chosen jobs
+    went unverified because the budget was spent."""
     return {
         'checked': _liveness.get('checked', 0),
         'closed': list(_liveness.get('closed', ())),
         'closed_page': list(_liveness.get('closed_page', ())),
+        'restricted': list(_liveness.get('restricted', ())),
         'unverified': len(_liveness.get('unverified', ())),
     }
 
@@ -293,6 +315,44 @@ def drop_closed_postings(links):
             conn.close()
     except Exception as e:
         print(f"[!] Could not remove closed postings: {type(e).__name__}")
+        return 0
+
+
+def hold_back_restricted(links):
+    """
+    Hold back the unsent rows whose page limits a remote hire to countries
+    the user cannot take, so they are not checked again tomorrow.
+
+    Done the way suppress_ineligible does it, through telegram_sent_jobs, so
+    no row is deleted. Each one is logged with the countries the page named
+    and its full link. Never fatal. Returns how many rows were held back.
+    """
+    links = list(dict.fromkeys(link for link in links if link))
+    if not links:
+        return 0
+    try:
+        conn = sqlite3.connect(Config.DATABASE_PATH)
+        try:
+            placeholders = ','.join('?' for _ in links)
+            rows = conn.execute(f"""
+                SELECT id, job_title, company, link FROM jobs
+                WHERE link IN ({placeholders})
+                  AND id NOT IN (SELECT job_id FROM telegram_sent_jobs)""", links).fetchall()
+            for job_id, title, company, link in rows:
+                where = ', '.join(sorted(_PAGE_APPLICANTS.get(link) or ()))
+                print(f"[ineligible:applicant_countries {where}] id={job_id} | "
+                      f"{title} | {company} | {link}")
+            if rows:
+                conn.executemany("""
+                    INSERT INTO telegram_sent_jobs (job_id) VALUES (?)
+                    ON CONFLICT(job_id) DO NOTHING
+                """, [(row[0],) for row in rows])
+                conn.commit()
+            return len(rows)
+        finally:
+            conn.close()
+    except Exception as e:
+        print(f"[!] Could not hold back restricted jobs: {type(e).__name__}")
         return 0
 
 
@@ -1070,15 +1130,19 @@ def _log_selected(tag, jobs):
 
 
 def _report_liveness():
-    """Log this run's liveness checks and remove the rows the vendor proved
-    closed. A page that only read as closed is logged and kept for a recheck."""
+    """Log this run's liveness checks, remove the rows the vendor proved
+    closed and hold back the ones whose page limits the hire to other
+    countries. A page that only read as closed is logged and kept for a
+    recheck."""
     summary = liveness_summary()
     print(f"[*] Liveness: {summary['checked']} checked, {len(summary['closed'])} closed, "
           f"{len(summary['closed_page'])} skipped as closed by the page check, "
+          f"{len(summary['restricted'])} held back as limited to other countries, "
           f"{summary['unverified']} sent unverified (check budget spent)")
     for link in summary['closed_page']:
         print(f"[closed-page, skipped today] {link}")
     drop_closed_postings(summary['closed'])
+    hold_back_restricted(summary['restricted'])
 
 
 def main():
