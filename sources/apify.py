@@ -8,12 +8,15 @@ Actors used:
   - misceres/indeed-scraper        (Indeed)
   - apify/website-content-crawler  (career page enrichment)
 
-Free tier: ~$5 compute units/month. LinkedIn search ~0.25 CU per run.
+Paid per result on Apify's free plan ($5 a month, hard stop). See Budget below.
 """
 
 import os
 import time
 from datetime import datetime
+from decimal import Decimal
+
+from core.countries import iso_name, with_countries
 from core.utils import setup_logging
 
 logger = setup_logging('sources.apify')
@@ -38,32 +41,89 @@ def _salary_str(job: dict) -> str | None:
     return job.get('salary') or None
 
 
+# ── Budget ────────────────────────────────────────────────────────────────────
+# Both actors are paid per result and the account is on Apify's free plan,
+# which stops at $5 a month (it never bills). A normal run costs about $0.13:
+# LinkedIn 3 searches x 15 jobs at about $0.0015 a job, Indeed 1 search x 10
+# jobs at $0.006 a job. APIFY_MONTHLY_CAP_USD stops calling Apify a little
+# before the plan's cap, so the source goes quiet for the last days of a
+# cycle instead of failing mid-run. Every call also carries its own hard cost
+# limit (max_total_charge_usd), so one call can never run away.
+LINKEDIN_ROWS = 15
+LINKEDIN_CALL_LIMIT_USD = Decimal('0.05')
+INDEED_ROWS = 10
+INDEED_CALL_LIMIT_USD = Decimal('0.08')
+# LinkedIn experience levels: 1 internship, 2 entry, 3 associate, 4 mid-senior,
+# 5 director. Entry and associate match the roles the digest is for.
+LINKEDIN_LEVELS = ["2", "3"]
+
+
+def _monthly_cap():
+    try:
+        return float(os.getenv('APIFY_MONTHLY_CAP_USD', '4.5'))
+    except ValueError:
+        return 4.5
+
+
+def budget_left(client) -> bool:
+    """False once this cycle's Apify usage reaches APIFY_MONTHLY_CAP_USD.
+    An unreadable usage figure counts as budget left: the per-call cost
+    limits still apply."""
+    try:
+        current = client.user().limits().get('current', {})
+        used = float(current.get('monthlyUsageUsd') or 0)
+    except Exception as e:
+        logger.debug(f"[Apify] usage check failed: {type(e).__name__}")
+        return True
+    if used >= _monthly_cap():
+        logger.warning(f"[Apify] ${used:.2f} used this cycle, cap ${_monthly_cap():.2f}: "
+                       f"skipping Apify until the cycle resets")
+        return False
+    return True
+
+
+def _indeed_country(day=None) -> str:
+    """One Indeed country a day, in turn, from APIFY_INDEED_COUNTRIES."""
+    codes = [c.strip().upper() for c in
+             os.getenv('APIFY_INDEED_COUNTRIES', 'GB,IE,NL,DE,AT,BE,CH').split(',') if c.strip()]
+    if not codes:
+        return 'GB'
+    day = day if day is not None else datetime.now().timetuple().tm_yday
+    return codes[day % len(codes)]
+
+
 # ── LinkedIn Jobs ─────────────────────────────────────────────────────────────
 
-def search_linkedin(queries: list[str], max_per_query: int = 25) -> list[dict]:
+def search_linkedin(queries: list[str], client=None) -> list[dict]:
     """
-    Run LinkedIn Jobs scraper for each query.
-    Actor: bebity/linkedin-jobs-scraper
+    Run the LinkedIn Jobs scraper once per query. Actor: bebity/linkedin-jobs-scraper.
+
+    The actor's input changed: it used to take queries, locationFilter,
+    datePostedFilter and count, and now takes titles, locations, rows and
+    publishedAt. The old names were silently ignored, so every call returned
+    the actor's default listing (US restaurant and retail jobs) instead of
+    the search. rows must be set: 0 means every page of results.
     """
-    try:
-        client = _client()
-    except ValueError as e:
-        logger.warning(f"[Apify] {e}")
-        return []
+    if client is None:
+        try:
+            client = _client()
+        except ValueError as e:
+            logger.warning(f"[Apify] {e}")
+            return []
+    location = os.getenv('APIFY_LINKEDIN_LOCATION') or 'European Union'
 
     jobs = []
     for query in queries:
-        logger.info(f"[Apify/LinkedIn] Searching: {query!r}")
+        logger.info(f"[Apify/LinkedIn] Searching: {query!r} in {location}")
         try:
-            # timeout_secs caps how long we wait for the actor. Without it a
-            # runaway actor blocks the whole daily run, which is exactly how the
-            # Indeed scraper used to stall for 30+ minutes.
             run = client.actor("bebity/linkedin-jobs-scraper").call(run_input={
-                "queries": [query],
-                "locationFilter": "Remote",
-                "datePostedFilter": "past-week",
-                "count": max_per_query,
-            }, timeout_secs=120)
+                "titles": [query],
+                "locations": [location],
+                "rows": LINKEDIN_ROWS,
+                "publishedAt": "r604800",       # past week
+                "experienceLevels": LINKEDIN_LEVELS,
+            }, max_items=LINKEDIN_ROWS, max_total_charge_usd=LINKEDIN_CALL_LIMIT_USD,
+               timeout_secs=120)
             for item in client.dataset(run["defaultDatasetId"]).iterate_items():
                 try:
                     jobs.append({
@@ -71,6 +131,7 @@ def search_linkedin(queries: list[str], max_per_query: int = 25) -> list[dict]:
                         "company":        item.get("companyName", ""),
                         "description":    item.get("description", ""),
                         "link":           item.get("jobUrl") or item.get("applyUrl", ""),
+                        "location":       item.get("location", ""),
                         "salary":         _salary_str(item),
                         "source":         "Apify / LinkedIn",
                         "extracted_date": datetime.now().isoformat(),
@@ -87,32 +148,36 @@ def search_linkedin(queries: list[str], max_per_query: int = 25) -> list[dict]:
 
 # ── Indeed ────────────────────────────────────────────────────────────────────
 
-def search_indeed(queries: list[str], max_per_query: int = 25) -> list[dict]:
+def search_indeed(queries: list[str], country=None, client=None) -> list[dict]:
     """
-    Run Indeed scraper for each query.
-    Actor: misceres/indeed-scraper
+    Run the Indeed scraper once per query in one country. Actor: misceres/indeed-scraper.
+
+    It used to search the US site (the actor's default country) with two
+    fixed queries, "remote engineer" and "content strategy", and dropped the
+    location the actor returns, so US jobs reached the digest with no place
+    the country filter could read. It now searches one European Indeed site a
+    day with the CV's own query, and keeps the location, tagged with the
+    country searched. maxItems and parseJobDetail no longer exist in the
+    actor's input; maxItemsPerSearch is the cap.
     """
-    try:
-        client = _client()
-    except ValueError as e:
-        logger.warning(f"[Apify] {e}")
-        return []
+    if client is None:
+        try:
+            client = _client()
+        except ValueError as e:
+            logger.warning(f"[Apify] {e}")
+            return []
+    country = country or _indeed_country()
 
     jobs = []
     for query in queries:
-        logger.info(f"[Apify/Indeed] Searching: {query!r}")
+        logger.info(f"[Apify/Indeed] Searching: {query!r} in {country}")
         try:
             run = client.actor("misceres/indeed-scraper").call(run_input={
                 "position": query,
-                "location": "Remote",
-                "maxItems": max_per_query,
-                # List-only. With parseJobDetail True the actor fetches a full
-                # detail page per job and crawls thousands of pages, which is
-                # what stalled the run. The scam-risk screen downstream works on
-                # the title, company and link this returns, so full descriptions
-                # are not needed here.
-                "parseJobDetail": False,
-            }, timeout_secs=120)
+                "country": country,
+                "maxItemsPerSearch": INDEED_ROWS,
+            }, max_items=INDEED_ROWS, max_total_charge_usd=INDEED_CALL_LIMIT_USD,
+               timeout_secs=120)
             for item in client.dataset(run["defaultDatasetId"]).iterate_items():
                 try:
                     jobs.append({
@@ -120,6 +185,7 @@ def search_indeed(queries: list[str], max_per_query: int = 25) -> list[dict]:
                         "company":        item.get("company", ""),
                         "description":    item.get("description", ""),
                         "link":           item.get("url", ""),
+                        "location":       with_countries(item.get("location", ""), [iso_name(country)]),
                         "salary":         item.get("salary") or None,
                         "source":         "Apify / Indeed",
                         "extracted_date": datetime.now().isoformat(),
@@ -164,34 +230,32 @@ class ApifyJobSearcher:
 
     def search_all(self, queries: list[str]) -> list[dict]:
         """
-        Run LinkedIn with specific queries + Indeed once with a broad query.
-        LinkedIn: $1/1,000 (specific skill-based queries for quality)
-        Indeed: $6/1,000 (single broad query for diversity, one call per session)
+        LinkedIn with the top three CV queries, then Indeed with the top one,
+        both under the monthly budget check. Duplicates by link are dropped.
         """
+        try:
+            client = _client()
+        except ValueError as e:
+            logger.warning(f"[Apify] {e}")
+            return []
+        if not budget_left(client):
+            return []
+
         all_jobs: list[dict] = []
         seen: set[str] = set()
 
-        # 1. LinkedIn, all specific queries (top 3)
-        logger.info(f"[Apify/LinkedIn] Searching {len(queries[:3])} specific queries...")
-        for job in search_linkedin(queries[:3]):
-            link = job.get("link", "")
-            key  = link or f"{job['title']}|{job['company']}"
-            if key not in seen:
-                seen.add(key)
-                all_jobs.append(job)
+        def keep(found):
+            for job in found:
+                link = job.get("link", "")
+                key = link or f"{job['title']}|{job['company']}"
+                if key not in seen:
+                    seen.add(key)
+                    all_jobs.append(job)
 
-        # 2. Indeed, list-only and hard-capped. parseJobDetail=False stops the
-        #    detail-page crawl that used to stall the run, maxItems caps it, and
-        #    timeout_secs is the backstop. Indeed is the noisiest, scam-prone
-        #    source, so downstream it is demoted as a source AND any listing that
-        #    trips the scam-risk screen is penalised and flagged.
-        logger.info(f"[Apify/Indeed] Searching with broad queries...")
-        for job in search_indeed(["remote engineer", "content strategy"]):
-            link = job.get("link", "")
-            key  = link or f"{job['title']}|{job['company']}"
-            if key not in seen:
-                seen.add(key)
-                all_jobs.append(job)
+        logger.info(f"[Apify/LinkedIn] Searching {len(queries[:3])} specific queries...")
+        keep(search_linkedin(queries[:3], client=client))
+        logger.info("[Apify/Indeed] Searching the top query...")
+        keep(search_indeed(queries[:1], client=client))
 
         logger.info(f"[Apify] {len(all_jobs)} unique jobs total")
         return all_jobs
