@@ -51,13 +51,15 @@ SOURCES
                           enrich step fetches the text for titles worth reading.
   Aggregators             RemoteOK, Remotive, Arbeitnow, The Muse, Jobicy,
                           WeWorkRemotely, Himalayas, Bundesagentur (German
-                          Federal Employment Agency), Adzuna, Jooble and Reed
+                          Federal Employment Agency, refuses every request
+                          with HTTP 403 so far), Adzuna, Jooble and Reed
                           (the last three need a free key), plus an optional
                           local board switched on with REGIONAL_BOARDS
   LinkedIn                Public guest endpoint, no authentication. Cards
                           have no text; the posting is fetched in ENRICH
   JSearch                 RapidAPI, metered, capped by JSEARCH_BUDGET
-                          (40 queries a run by default)
+                          (6 queries a run by default, inside the free
+                          plan's 200 requests a month)
   Apify                   LinkedIn with full text, plus Indeed listings
                           without full text, metered
   SerpAPI                 Google Jobs, needs a key, capped by SERPAPI_BUDGET
@@ -255,7 +257,7 @@ Only what is in the code.
 
 **Reads employer careers pages directly.** Six applicant tracking systems: Greenhouse, Lever, Ashby, SmartRecruiters, Workday and SuccessFactors. You list the companies you want in a config file and it reads each board through the vendor's public endpoint on every run. No API key, no quota, and the posting is the company's own rather than an aggregator's copy of it. SuccessFactors has no open JSON API, so that adapter reads the public Google Jobs RSS feed a Career Site Builder site publishes at `HOST/sitemap.xml`.
 
-**Survives a dead source.** Each of the seven search sources (company boards, JSearch, the free aggregators as one group, LinkedIn, SerpAPI, Apify, DuckDuckGo) runs inside a wrapper that times it, catches any exception and records the outcome. The Gmail drafts reader has its own error handling and is not timed or recorded. Most adapters also catch their own request errors, so the wrapper usually records a failure as an empty result, not an error.
+**Survives a dead source.** Each of the seven search sources (company boards, JSearch, the free aggregators as one group, LinkedIn, SerpAPI, Apify, DuckDuckGo) runs inside a wrapper that times it, catches any exception and records the outcome. The Gmail drafts reader has its own error handling and is not timed or recorded. Most adapters also catch their own request errors, so the wrapper usually records a failure as an empty result, not an error. A free board that answers 403 or 429 is not asked again for the rest of that run, since the next query a second later gets the same answer.
 
 **Retries transient failures, where it can.** A shared session (`core/http_client.py`) retries 408, 429, 500, 502, 503, 504 and connection errors with exponential backoff, and obeys a `Retry-After` header. 401, 403 and 404 are deliberately not retried, because repeating a request the server already rejected wastes quota. That session covers the company-board list fetches and the LinkedIn guest endpoint only. JSearch, SerpAPI, the free aggregators, Apify, DuckDuckGo, the per-job detail fetches and the Telegram send do not retry.
 
@@ -375,7 +377,7 @@ Python 3.10 or newer: the code uses 3.10 syntax, and the pinned `ddgs` release r
 | Tests | pytest |
 | Normalisation | standard library only, `re` and `urllib.parse` |
 
-1206 tests, covering scoring, filtering, title rules, work eligibility, language rules, deduplication, storage, the send history, the pre-send liveness check, source health, digest composition and volume, the scam screen, the SSRF guard on link checking, retry policy, the Cloud Run wrapper, local-language scoring and three regressions that each cost real results. Tests run against fixtures and temporary files, and no test makes a network call.
+1212 tests, covering scoring, filtering, title rules, work eligibility, language rules, deduplication, storage, the send history, the pre-send liveness check, source health, digest composition and volume, the scam screen, the SSRF guard on link checking, retry policy, the Cloud Run wrapper, local-language scoring and three regressions that each cost real results. Tests run against fixtures and temporary files, and no test makes a network call.
 
 One file, `tests/test_end_to_end.py`, runs a whole day through the real pipeline in order: search, dedup, description fetch, scoring, storage, digest selection and sending. Every network call is replaced: fake job boards (one of which crashes), a fixed advert page for the description fetch, a link check that always answers "live", a temporary database, and Telegram's HTTP call captured instead of sent. It then checks what would have reached the chat: the strong match is there once, the weak match and the dealbreaker are not, the local-language advert lands in the regional message, the crashing source is named, nothing repeats the next day, a job reposted under a new link after the cleanup is not sent again, every sent job is logged with its full link, and a failed send goes out the next day. The duplicate check tests three dedup layers together, so switching off one layer does not fail it.
 
@@ -449,7 +451,7 @@ Or point `MASTER_CV_PATH` in `core/.env` at another file. Fill in the `variants:
 
 ```bash
 pip install -r requirements-dev.txt
-python -m pytest              # 1206 tests, no network
+python -m pytest              # 1212 tests, no network
 python job_search_smart.py    # one real run: search, score, store
 python telegram_sender.py     # send the digest
 ```

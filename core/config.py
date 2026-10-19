@@ -192,7 +192,11 @@ class Config:
     # a cap, every query added anywhere else silently cost two more JSearch
     # calls. Queries are sorted longest-first, so the cap keeps the most
     # specific ones and drops the broad tail.
-    JSEARCH_BUDGET = int(os.getenv("JSEARCH_BUDGET", "40"))
+    # Lowered from 40 to 6 on 2026-10-19. The free BASIC plan allows 200
+    # requests a month (read from its X-RateLimit headers) and each query is
+    # one request, so 40 a run used the month up in five days and every run
+    # after that got a 429. 6 a run is at most 186 in a 31-day month.
+    JSEARCH_BUDGET = int(os.getenv("JSEARCH_BUDGET", "6"))
     # EXCLUDED_LOCATIONS drops a job outright when its location field matches any
     # of these terms, remote or on-site alike. Personal to the user and read from
     # .env, so the public engine excludes nothing by default. Comma separated,

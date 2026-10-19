@@ -197,11 +197,12 @@ class TestLocalBoardHasItsOwnFetchBudget:
 
     def test_local_adverts_are_fetched_when_the_shared_budget_is_spent(self, fetched):
         from sources import ats
-        jobs = self._jobs('Workday', 70) + self._jobs('Infostud', 5, 'Short teaser.')
+        limit = ats.DETAIL_MAX_FETCHES
+        jobs = self._jobs('Workday', limit + 10) + self._jobs('Infostud', 5, 'Short teaser.')
         enriched, over_budget = ats.enrich_descriptions(jobs, should_fetch=lambda j: True)
         assert fetched.count('Infostud') == 5
-        assert fetched.count('Workday') == 60
-        assert (enriched, over_budget) == (65, 10)
+        assert fetched.count('Workday') == limit
+        assert (enriched, over_budget) == (limit + 5, 10)
         assert all(job['description'] == 'Full advert.' for job in jobs[-5:])
 
     def test_the_local_budget_has_its_own_cap(self, fetched, monkeypatch):

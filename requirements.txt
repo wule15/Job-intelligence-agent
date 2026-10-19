@@ -7,7 +7,7 @@ beautifulsoup4==4.12.0
 
 # Job board clients
 ddgs==9.13.0
-apify-client>=1.7.0
+apify-client>=1.7.0,<3  # 3.x renamed timeout_secs and returns a Run object, see sources/apify.py
 
 # Master CV, the single source of truth the scorer reads its variants from
 PyYAML>=6.0

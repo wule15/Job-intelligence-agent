@@ -45,7 +45,14 @@ session = build_session(user_agent=HEADERS['User-Agent'])
 # best-effort, so a slow detail page fails fast rather than blocking the run.
 # This is the ATS-side version of the timeout that was added to the Apify call.
 DETAIL_TIMEOUT = (4, 8)      # (connect, read) seconds
-DETAIL_BUDGET_SECS = 90      # cumulative wall-clock ceiling for the whole enrich pass
+# 150 fetches in 240 seconds. Live runs had 136 to 144 title-only jobs pass the
+# screen against a budget of 60, so most LinkedIn cards were scored on their
+# title alone. A cloud run used 9 of its 30 minutes, so there is room.
+DETAIL_BUDGET_SECS = 240     # cumulative wall-clock ceiling for the title-only pass
+DETAIL_MAX_FETCHES = 150
+# LinkedIn's guest endpoint rate limits fast callers, so its detail fetches
+# are spaced out. A refused fetch keeps the card's title, nothing breaks.
+LINKEDIN_DETAIL_DELAY = 1.0
 detail_session = build_session(attempts=0, user_agent=HEADERS['User-Agent'])
 
 GREENHOUSE_URL = 'https://boards-api.greenhouse.io/v1/boards/{slug}/jobs?content=true'
@@ -529,6 +536,7 @@ def _detail_infostud(job):
 def _detail_linkedin(job):
     """Full advert text for one LinkedIn job, from the guest posting endpoint."""
     from sources.linkedin import fetch_linkedin_detail
+    time.sleep(LINKEDIN_DETAIL_DELAY)
     return fetch_linkedin_detail(job['link'], session=detail_session, timeout=DETAIL_TIMEOUT)
 
 
@@ -540,7 +548,7 @@ DETAIL_FETCHERS = {
 }
 
 
-def enrich_descriptions(jobs, should_fetch, max_fetches=60, max_snippet_fetches=None):
+def enrich_descriptions(jobs, should_fetch, max_fetches=None, max_snippet_fetches=None):
     """
     Fetch full descriptions for jobs whose source returned titles only, or
     only a teaser.
@@ -556,13 +564,16 @@ def enrich_descriptions(jobs, should_fetch, max_fetches=60, max_snippet_fetches=
             are worth a request. Keeping this out of the connector means the
             scoring logic owns the decision, not the fetcher.
         max_fetches: hard ceiling on requests to the title-only sources per
-            run. Reported when hit, never silently applied.
+            run. Reported when hit, never silently applied. None means
+            DETAIL_MAX_FETCHES, read now.
         max_snippet_fetches: the same for the teaser-only sources. None means
             SNIPPET_MAX_FETCHES, read now.
 
     Returns:
         (enriched_count, skipped_over_budget), both summed over the two budgets
     """
+    if max_fetches is None:
+        max_fetches = DETAIL_MAX_FETCHES
     if max_snippet_fetches is None:
         max_snippet_fetches = SNIPPET_MAX_FETCHES
     candidates = [

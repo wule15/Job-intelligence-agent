@@ -19,7 +19,7 @@ import xml.etree.ElementTree as ET
 import requests
 import time
 from datetime import datetime
-from urllib.parse import quote
+from urllib.parse import quote, urlparse
 from core.countries import expand_codes, is_remote_place, iso_name, location_countries
 from core.utils import setup_logging
 
@@ -31,13 +31,50 @@ HEADERS = {
 TIMEOUT = 15
 
 
+# A board that answers 429 (rate limited) or 403 (refused) once will answer
+# the same to the next query a second later. Arbeitnow was asked about 140
+# times a run and refused every time after the first few; Bundesagentur has
+# refused every request ever made, from the PC and from the cloud. So the
+# first refusal parks that host for the rest of the run. Each run is a new
+# process, so the board is tried again the next day.
+REFUSAL_CODES = (403, 429)
+_refused_hosts = set()
+
+
+def _host(url):
+    return urlparse(url).netloc.lower()
+
+
+def host_refused(url):
+    """True when this host already refused a request in this run."""
+    return _host(url) in _refused_hosts
+
+
+def note_refusal(url, status):
+    """Park the host after a 403 or 429. Logs once per host per run."""
+    host = _host(url)
+    if status in REFUSAL_CODES and host not in _refused_hosts:
+        _refused_hosts.add(host)
+        logger.warning(f"HTTP {status} from {host}, skipping it for the rest of this run")
+
+
+def reset_refused_hosts():
+    """Forget the parked hosts. For tests, and for a second pass in one process."""
+    _refused_hosts.clear()
+
+
 def _get(url, params=None):
     """GET with timeout + error handling. Returns parsed JSON or None."""
+    if host_refused(url):
+        return None
     try:
         r = requests.get(url, params=params, headers=HEADERS, timeout=TIMEOUT)
         if r.status_code == 200:
             return r.json()
-        logger.warning(f"HTTP {r.status_code} from {url}")
+        if r.status_code in REFUSAL_CODES:
+            note_refusal(url, r.status_code)
+        else:
+            logger.warning(f"HTTP {r.status_code} from {url}")
     except Exception as e:
         logger.warning(f"Request failed {url}: {e}")
     return None
@@ -191,6 +228,8 @@ def search_remotive(keywords):
 
 
 # ── Arbeitnow ─────────────────────────────────────────────────────────────────
+
+ARBEITNOW_MAX_QUERIES = 15
 
 def search_arbeitnow(query, pages=3):
     """
@@ -771,10 +810,13 @@ def search_bundesagentur(query, size=25):
     be verified from the build environment (HTTP 403 "no match"), so confirm it
     returns data once running on the live deployment. Fails soft (returns []).
     """
+    url = "https://rest.arbeitsagentur.de/jobboerse/jobsuche-service/pc/v4/app/jobs"
+    if host_refused(url):
+        return []
     logger.info(f"[Bundesagentur] Searching: {query!r}")
     try:
         r = requests.get(
-            "https://rest.arbeitsagentur.de/jobboerse/jobsuche-service/pc/v4/app/jobs",
+            url,
             params={'was': query, 'size': size, 'page': 1},
             headers={
                 'X-API-Key': 'jobboerse-jobsuche',
@@ -784,7 +826,10 @@ def search_bundesagentur(query, size=25):
             timeout=TIMEOUT,
         )
         if r.status_code != 200:
-            logger.warning(f"[Bundesagentur] HTTP {r.status_code}")
+            if r.status_code in REFUSAL_CODES:
+                note_refusal(url, r.status_code)
+            else:
+                logger.warning(f"[Bundesagentur] HTTP {r.status_code}")
             return []
         data = r.json()
     except Exception as e:
@@ -890,8 +935,10 @@ class FreeJobSearcher:
         except Exception as e:
             logger.warning(f"Remotive skipped: {e}")
 
-        # 3. Arbeitnow, one request per query
-        for q in queries:
+        # 3. Arbeitnow, one request per query. Its search is broad (two
+        #    different queries returned the same 117 jobs), so the first
+        #    ARBEITNOW_MAX_QUERIES are enough, and it rate limits a long run.
+        for q in queries[:ARBEITNOW_MAX_QUERIES]:
             try:
                 all_jobs.extend(search_arbeitnow(q, pages=2))
                 time.sleep(0.5)
