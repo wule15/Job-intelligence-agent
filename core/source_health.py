@@ -204,7 +204,13 @@ def _short_error(error):
     their API key in the query string. The digest goes to a chat, so no URL
     ever reaches it.
     """
-    return re.sub(r'https?://\S+', '<url>', error or '')[:70].strip()
+    text = re.sub(r'https?://\S+', '<url>', error or '')
+    # A requests ConnectionError names the path without a scheme
+    # ("url: /search.json?engine=...&api_key=..."), so strip that form too,
+    # and any key-like parameter wherever it appears.
+    text = re.sub(r'\burl:\s*\S+', 'url: <url>', text)
+    text = re.sub(r'(?i)\b(api_key|app_key|app_id|apikey|token|key)=[^&\s]+', r'\1=<hidden>', text)
+    return text[:70].strip()
 
 
 def health_alerts(db_path=None, runs=STALE_AFTER_EMPTY_RUNS):

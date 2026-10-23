@@ -103,6 +103,14 @@ class JSearchJobScraper:
                     logger.error(f"Response: {response.text[:200]}")
                     continue
 
+                # RapidAPI reports the requests left this month on every
+                # response. At 0 the next call would only fetch a 429, so stop
+                # now instead of spending a request to learn it.
+                remaining = response.headers.get('X-RateLimit-Requests-Remaining')
+                if remaining is not None and remaining.strip().isdigit() and int(remaining) <= 0:
+                    self.quota_exhausted = True
+                    logger.warning("JSearch monthly quota used up; no further calls this run")
+
                 data = response.json()
 
                 if 'data' not in data:

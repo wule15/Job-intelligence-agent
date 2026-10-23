@@ -163,7 +163,9 @@ def search_google_jobs(query, market=None, num_results=10):
         logger.warning(f"[SerpAPI] Timeout for {label}")
         return []
     except Exception as e:
-        logger.warning(f"[SerpAPI] Error for {label}: {e}")
+        # Type only: a connection error's text includes the query string, and
+        # api_key is in it.
+        logger.warning(f"[SerpAPI] Error for {label}: {type(e).__name__}")
         return []
 
 

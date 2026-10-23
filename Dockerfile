@@ -34,8 +34,10 @@ WORKDIR /app
 
 # Dependencies before source, so editing a Python file does not invalidate the
 # cached layer that installs them.
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+COPY requirements.txt constraints.txt ./
+# constraints.txt pins every package, indirect ones included, to the versions
+# the live job last ran on. See the note at its top.
+RUN pip install --no-cache-dir -r requirements.txt -c constraints.txt
 
 COPY . .
 

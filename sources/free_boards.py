@@ -76,7 +76,10 @@ def _get(url, params=None):
         else:
             logger.warning(f"HTTP {r.status_code} from {url}")
     except Exception as e:
-        logger.warning(f"Request failed {url}: {e}")
+        # The exception's own text carries the full request path, query string
+        # included, and Adzuna sends its app_id and app_key in the query. Log
+        # the error type only, the way the Jooble path already does.
+        logger.warning(f"Request failed {url}: {type(e).__name__}")
     return None
 
 
@@ -990,7 +993,7 @@ class FreeJobSearcher:
                     all_jobs.extend(search_adzuna(q, country=country))
                     time.sleep(0.3)
                 except Exception as e:
-                    logger.warning(f"Adzuna skipped for '{q}' ({country}): {e}")
+                    logger.warning(f"Adzuna skipped for '{q}' ({country}): {type(e).__name__}")
 
         # 10. Jooble, global aggregator, top 3 queries (defaults to remote)
         for q in queries[:3]:
@@ -998,7 +1001,7 @@ class FreeJobSearcher:
                 all_jobs.extend(search_jooble(q))
                 time.sleep(0.5)
             except Exception as e:
-                logger.warning(f"Jooble skipped for '{q}': {e}")
+                logger.warning(f"Jooble skipped for '{q}': {type(e).__name__}")
 
         # 10b. Gulf coverage via Jooble, since Adzuna has no UAE/Gulf. Use the
         # COUNTRY name ("United Arab Emirates", not "Dubai"), city names
@@ -1010,7 +1013,7 @@ class FreeJobSearcher:
                     all_jobs.extend(search_jooble(q, location=loc))
                     time.sleep(0.3)
                 except Exception as e:
-                    logger.warning(f"Jooble {loc} skipped for '{q}': {e}")
+                    logger.warning(f"Jooble {loc} skipped for '{q}': {type(e).__name__}")
 
         # 10c. Regional coverage via Jooble, driven by the user's private config
         #      (REGIONAL_JOB_LOCATIONS in .env, empty by default so the public
@@ -1029,7 +1032,7 @@ class FreeJobSearcher:
                     all_jobs.extend(search_jooble(q, location=loc))
                     time.sleep(0.3)
                 except Exception as e:
-                    logger.warning(f"Jooble regional {loc} skipped for '{q}': {e}")
+                    logger.warning(f"Jooble regional {loc} skipped for '{q}': {type(e).__name__}")
 
         # 10d. Dedicated regional job boards, driven by REGIONAL_BOARDS in the
         #      user's .env (empty by default, so the public engine adds nothing).

@@ -466,7 +466,9 @@ class SmartJobSearcher:
               f"specific queries, budget {Config.JSEARCH_BUDGET})...")
         with source_health.track('JSearch', queries=len(jsearch_queries)) as r:
             for query in jsearch_queries:
-                r.jobs.extend(self.jsearch.search_jobs(query, num_pages=2))
+                # One request per query: JSEARCH_BUDGET counts requests, and the
+                # free plan allows 200 a month. Two pages doubled the spend.
+                r.jobs.extend(self.jsearch.search_jobs(query, num_pages=1))
         results.append(r)
 
         # 3. Free aggregators, all queries, no quota

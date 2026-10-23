@@ -17,6 +17,7 @@
 !sources
 !templates
 !requirements.txt
+!constraints.txt
 
 # Private files that can sit inside the folders brought back above. Each
 # pattern starts with **/ so it matches at any depth: a plain .env would
@@ -57,6 +58,7 @@
 **/__pycache__
 **/*.pyc
 
-# requirements.txt is a .txt file, so it is brought back once more after the
-# rule above that leaves out every .txt.
+# requirements.txt and constraints.txt are .txt files, so they are brought
+# back once more after the rule above that leaves out every .txt.
 !requirements.txt
+!constraints.txt

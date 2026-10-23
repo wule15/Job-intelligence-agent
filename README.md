@@ -380,7 +380,7 @@ Python 3.10 or newer: the code uses 3.10 syntax, and the pinned `ddgs` release r
 | Tests | pytest |
 | Normalisation | standard library only, `re` and `urllib.parse` |
 
-1217 tests, covering scoring, filtering, title rules, work eligibility, language rules, deduplication, storage, the send history, the pre-send liveness check, source health, digest composition and volume, the scam screen, the SSRF guard on link checking, retry policy, the Cloud Run wrapper, local-language scoring and three regressions that each cost real results. Tests run against fixtures and temporary files, and no test makes a network call.
+1241 tests, covering scoring, filtering, title rules, work eligibility, language rules, deduplication, storage, the send history, the pre-send liveness check, source health, digest composition and volume, the scam screen, the SSRF guard on link checking, retry policy, the Cloud Run wrapper, local-language scoring and three regressions that each cost real results. Tests run against fixtures and temporary files, and no test makes a network call.
 
 One file, `tests/test_end_to_end.py`, runs a whole day through the real pipeline in order: search, dedup, description fetch, scoring, storage, digest selection and sending. Every network call is replaced: fake job boards (one of which crashes), a fixed advert page for the description fetch, a link check that always answers "live", a temporary database, and Telegram's HTTP call captured instead of sent. It then checks what would have reached the chat: the strong match is there once, the weak match and the dealbreaker are not, the local-language advert lands in the regional message, the crashing source is named, nothing repeats the next day, a job reposted under a new link after the cleanup is not sent again, every sent job is logged with its full link, and a failed send goes out the next day. The duplicate check tests three dedup layers together, so switching off one layer does not fail it.
 
@@ -454,7 +454,7 @@ Or point `MASTER_CV_PATH` in `core/.env` at another file. Fill in the `variants:
 
 ```bash
 pip install -r requirements-dev.txt
-python -m pytest              # 1217 tests, no network
+python -m pytest              # 1241 tests, no network
 python job_search_smart.py    # one real run: search, score, store
 python telegram_sender.py     # send the digest
 ```
@@ -538,16 +538,17 @@ The image pins Python 3.12 rather than tracking latest, so a new release cannot 
 
 ## Running on Google Cloud Run
 
-The same image can run the daily digest as a Cloud Run job in `europe-west1`, with `python cloud_run_job.py` as its command. The image's default command is unchanged, so the Docker run above still works.
+The daily digest has run as a Cloud Run job in `europe-west1` since 11 October 2026. Cloud Scheduler starts it at 09:20 Central European time, through its own service account that may only run this job. The image is the same one as above, with `python cloud_run_job.py` as the job's command; the image's default command is unchanged, so the Docker run above still works.
 
 What runs where:
 
 - **The Cloud Run job** runs `cloud_run_job.py` once per execution. It downloads the database, runs the search and the send as the PC does, and uploads the database again. One task, a 30-minute timeout and no automatic retries, because a retry after the send would send the digest twice. The script refuses to run as a retry.
 - **A private Cloud Storage bucket** holds the database between runs, as one object such as `db/job_digest.db`.
 - **Secret Manager** holds the `.env` file, the CV file, the company list and the optional exclusion list. Each is mounted as a file in its own folder, and job variables give the paths: `ENV_FILE_PATH`, `CV_FILE_PATH`, `COMPANIES_FILE_PATH`, `EXCLUDE_FILE_PATH`. `BUCKET` and `DB_OBJECT` name the database. A variable set on the job wins over the same key in the mounted `.env`.
-- **The PC** stays the fallback. Its scheduled task and its own database are untouched. The two databases do not sync, so a run on one side does not know what the other side sent. Copy the database across before switching.
+- **The PC** is the fallback. Its scheduled task is disabled, not deleted, and its database stopped at the day of the switch. The two databases do not sync, so a run on one side does not know what the other side sent: copy the cloud database down before switching back.
+- **What the cloud run leaves out:** its `.env` holds no Gmail or Anthropic keys, by design, so the Gmail drafts reader and the cover-letter script do not run there.
 
-The script never starts from an empty or damaged database. It stops if the object is missing, if the download does not match its MD5, or if `PRAGMA quick_check` fails. It saves only if the object is still the version it downloaded, so two runs cannot overwrite each other, and the losing copy goes to `conflicts/`. Any failure sends one line to Telegram saying what failed and whether a re-run is safe. The exit codes are listed at the top of `cloud_run_job.py`. The tests run it against an in-memory fake of Cloud Storage, the metadata server and Telegram, so they show the logic, not a working deployment.
+The script never starts from an empty or damaged database. It stops if the object is missing, if the download does not match its MD5, or if `PRAGMA quick_check` fails. It saves only if the object is still the version it downloaded, so two runs cannot overwrite each other, and the losing copy goes to `conflicts/`. Any failure it sees sends one line to Telegram saying what failed and whether a re-run is safe, and that includes a digest Telegram refused: the send script exits 1 when any message fails to go out or cannot be recorded as sent. It retries once on a 429, a 5xx or a connection that never reached Telegram, and never on a read timeout, which may already have delivered. A job that never starts at all (a scheduler or platform fault) sends nothing; that gap is known. The exit codes are listed at the top of `cloud_run_job.py`. The tests run the wrapper against an in-memory fake of Cloud Storage, the metadata server and Telegram; the live job is the evidence that the deployment works.
 
 Deploys are run by hand. Nothing in this repository creates the bucket, the secrets, the job or its schedule, and there is no CI. With placeholders:
 
@@ -571,7 +572,7 @@ A shadow run is a second job with `DB_OBJECT=shadow/job_digest.db` and `DIGEST_L
 
 _Screenshot from August 2026, before senior titles were dropped and before each job showed its source._
 
-Up to ten jobs in the main digest, up to ten in the direct-from-company shortlist and up to fifteen in the regional message, at most two per employer in each. Every job carries its score, its source and the CV that scored it.
+Up to ten jobs in the main digest, up to ten in the direct-from-company shortlist and up to fifteen in the regional message, at most two per employer in each. Every job carries its score, its source and the CV that scored it. The direct and regional messages have lower score bars, so they also need a title that names a target role: an engineer or technician in any of the boards' languages, a sales role, QA or test work, or one of the user's `TITLE_SCREEN_TERMS` (`ROLE_TITLE_GATE`, on by default).
 
 The percentages are a ranking device, not a probability. A score starts as the count of that CV's skill terms found in the job text, over a denominator capped at 25. A target role in the title lifts it part of the way to 100, but only when the advert alone already matches at least 20 percent, or when there is no advert text at all. An industrial or B2B sector word in the advert lifts it again, with no such condition. Location, remote, sponsorship, experience, source, flow-equipment and priority-employer multipliers then move it up or down, a suspected scam is pushed down, and the result is capped at 100. So for a CV with 25 or more skills, in an advert that names a target sector, one matched term scores about 33 before the multipliers, each further term adds about 3, and 40 means three or four terms matched, not that the job is a 40 percent fit. It exists to order the list and to apply the score bar, and the known weaknesses section below lists what it cannot see.
 

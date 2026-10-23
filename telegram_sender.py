@@ -5,6 +5,7 @@ import html
 import ipaddress
 import socket
 import sqlite3
+import sys
 import time
 from collections import defaultdict
 from datetime import datetime
@@ -20,7 +21,7 @@ from core.config import PROJECT_ROOT, Config
 from core.countries import COUNTRY_NAMES, applicant_countries, location_countries
 from core.job_filter import (
     ALWAYS_INCLUDE_SOURCES, content_drop_reason, fails_advert_language, fails_eligibility,
-    is_applicant_restricted, is_flow_equipment_role,
+    is_applicant_restricted, is_flow_equipment_role, is_target_role_title,
     matches_region, requires_unspoken_language, scam_risk, title_drop_reason,
 )
 from core.job_normalize import (
@@ -802,6 +803,8 @@ def get_direct_jobs(limit=DIRECT_DIGEST_SIZE, min_score=None, is_live=None):
     for job in rows:
         if len(selected) >= limit:
             break
+        if Config.ROLE_TITLE_GATE and not is_target_role_title(job[1]):
+            continue  # see is_target_role_title: the low bar needs a role title
         company = (job[2] or 'Unknown').strip().lower()
         if company_counts[company] >= MAX_PER_COMPANY:
             continue
@@ -873,6 +876,8 @@ def get_regional_jobs(limit=DIGEST_SIZE, min_score=None, is_live=None):
             break
         if not matches_region(job[8], terms):
             continue
+        if Config.ROLE_TITLE_GATE and not is_target_role_title(job[1]):
+            continue  # see is_target_role_title: the low bar needs a role title
         company = (job[2] or 'Unknown').strip().lower()
         if company_counts[company] >= MAX_PER_COMPANY:
             continue
@@ -950,19 +955,50 @@ def send_telegram_message(message):
         'parse_mode': 'HTML'
     }
 
-    try:
-        response = requests.post(url, data=payload, timeout=10)
+    # One retry, only where a second try cannot double a message: a 429 (after
+    # the wait Telegram asks for, capped), a 5xx, or a connection that never
+    # reached Telegram. A read timeout is not retried, because the message may
+    # already have been delivered.
+    for attempt in (1, 2):
+        try:
+            response = requests.post(url, data=payload, timeout=10)
+        except requests.exceptions.ReadTimeout:
+            print("[!] Error sending Telegram message: ReadTimeout (not retried, may have arrived)")
+            return False
+        except requests.exceptions.ConnectionError as e:
+            # Print the exception class only. requests puts the full request URL
+            # into connection errors, and that URL contains the bot token.
+            print(f"[!] Error sending Telegram message: {type(e).__name__}")
+            if attempt == 1:
+                time.sleep(TELEGRAM_RETRY_WAIT_SECS)
+                continue
+            return False
+        except Exception as e:
+            print(f"[!] Error sending Telegram message: {type(e).__name__}")
+            return False
+
         if response.status_code == 200:
             print("[+] Telegram message sent successfully!")
             return True
-        else:
-            print(f"[!] Telegram error: HTTP {response.status_code}")
-            return False
-    except Exception as e:
-        # Print the exception class only. requests puts the full request URL
-        # into connection errors, and that URL contains the bot token.
-        print(f"[!] Error sending Telegram message: {type(e).__name__}")
+        print(f"[!] Telegram error: HTTP {response.status_code}")
+        if attempt == 1 and (response.status_code == 429 or response.status_code >= 500):
+            time.sleep(_retry_after(response))
+            continue
         return False
+    return False
+
+
+TELEGRAM_RETRY_WAIT_SECS = 5
+TELEGRAM_MAX_RETRY_WAIT_SECS = 30
+
+
+def _retry_after(response):
+    """Seconds Telegram asks us to wait on a 429, capped; the default otherwise."""
+    try:
+        wait = int(response.json().get('parameters', {}).get('retry_after', 0))
+    except Exception:
+        wait = 0
+    return min(max(wait, TELEGRAM_RETRY_WAIT_SECS), TELEGRAM_MAX_RETRY_WAIT_SECS)
 
 def _render_job_lines(jobs):
     """
@@ -1147,6 +1183,11 @@ def _report_liveness():
 
 def main():
     force_utf8_streams()  # Serbian job titles must not crash a cp1252 console/log
+    # Every message that fails to go out, and every send that could not be
+    # recorded, is counted. A non-zero exit lets the cloud wrapper report it:
+    # before, a refused send still exited 0 and the day's digest vanished
+    # without a notice.
+    failures = []
     print("[*] Initializing Telegram tracking...")
     init_telegram_tracking()
     print(f"[*] Score bar: main {_fmt_score(Config.DIGEST_MIN_SCORE)}, "
@@ -1178,13 +1219,16 @@ def main():
         print(f"[*] Sending {len(direct_ids)} direct-company jobs...")
         if send_telegram_message(direct_msg):
             print(f"[+] Marking {len(direct_ids)} direct jobs as sent...")
-            mark_jobs_sent(direct_ids)
+            if not mark_jobs_sent(direct_ids):
+                failures.append('marking the direct jobs sent')
         else:
             print("[!] Direct digest failed to send - not marking those jobs sent")
+            failures.append('the direct digest')
     else:
         print("[*] No direct-from-company jobs today")
-        send_telegram_message(format_empty_section(
-            '🏢', 'Direct company openings', direct_min_score()))
+        if not send_telegram_message(format_empty_section(
+                '🏢', 'Direct company openings', direct_min_score())):
+            failures.append('the empty direct message')
 
     # Regional (home-market) digest goes next, and like the direct one marks its
     # jobs sent before the main digest is selected, so a regional job is never
@@ -1197,15 +1241,17 @@ def main():
         print(f"[*] Sending {len(regional_ids)} regional jobs...")
         if send_telegram_message(regional_msg):
             print(f"[+] Marking {len(regional_ids)} regional jobs as sent...")
-            mark_jobs_sent(regional_ids)
+            if not mark_jobs_sent(regional_ids):
+                failures.append('marking the regional jobs sent')
         else:
             print("[!] Regional digest failed to send - not marking those jobs sent")
+            failures.append('the regional digest')
     else:
         print("[*] No regional jobs today")
-        if _regional_configured():
-            send_telegram_message(format_empty_section(
+        if _regional_configured() and not send_telegram_message(format_empty_section(
                 '🌍', Config.REGIONAL_DIGEST_LABEL or 'Regional jobs',
-                Config.REGIONAL_MIN_SCORE))
+                Config.REGIONAL_MIN_SCORE)):
+            failures.append('the empty regional message')
 
     print("[*] Fetching unsent jobs...")
     jobs = get_unsent_jobs(limit=Config.MAIN_DIGEST_SIZE, is_live=is_job_live)
@@ -1223,9 +1269,10 @@ def main():
         # message, with the health note if there is one, so a quiet day is
         # not mistaken for a run that never happened.
         print("[*] No new jobs to send")
-        send_telegram_message(format_empty_section(
-            '🔍', 'Daily Job Digest', Config.DIGEST_MIN_SCORE) + health.rstrip())
-        return
+        if not send_telegram_message(format_empty_section(
+                '🔍', 'Daily Job Digest', Config.DIGEST_MIN_SCORE) + health.rstrip()):
+            failures.append('the empty main message')
+        return _exit_code(failures)
 
     digest += health
 
@@ -1234,9 +1281,21 @@ def main():
 
     if send_telegram_message(digest):
         print(f"[+] Marking {len(job_ids)} jobs as sent...")
-        mark_jobs_sent(job_ids)
+        if not mark_jobs_sent(job_ids):
+            failures.append('marking the main jobs sent')
     else:
         print("[!] Failed to send - not marking jobs as sent")
+        failures.append('the main digest')
+    return _exit_code(failures)
+
+
+def _exit_code(failures):
+    """1 when anything failed to send or to be recorded, else 0."""
+    if failures:
+        print('[!] Failed: ' + ', '.join(failures))
+        return 1
+    return 0
+
 
 if __name__ == '__main__':
-    main()
+    sys.exit(main())

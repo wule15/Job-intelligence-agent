@@ -159,7 +159,11 @@ PURE_DEV_TITLE_PATTERN = re.compile(
     r'|\bcloud[- ](?:(?:infrastructure|platform|security|devops|operations|ops|native|'
     r'software|data|network|systems?)[- ])?(?:engineers?|developers?)\b'
     r'|\b(?:cyber[- ]?)?security engineers?\b'
-    r'|\bdeveloper (?:advocates?|relations|evangelists?|experience)\b|\bdevrel\b')
+    r'|\bdeveloper (?:advocates?|relations|evangelists?|experience)\b|\bdevrel\b'
+    # Mobile app stacks. "Mobile Engineer - React Native" scored 52 on
+    # 20.10 because only the language-then-role order was listed. These
+    # words name nothing but a software stack.
+    r'|\b(?:react[- ]native|flutter|xamarin|ionic)\b')
 
 # Software titles that are wanted: QA and test automation, AI integration
 # work, industrial control programming (PLC, SCADA, robots), which is
@@ -1189,6 +1193,13 @@ def region_preference_multiplier(job: dict) -> float:
         return 1.0
     if _is_eu_located(location, text):
         return 1.0
+    # A country on the user's own allowed list is never "outside Europe".
+    # Serbia and Bosnia, where he needs no permit, used to take the 0.85
+    # downrank because they are not EU members, which put a sales role in
+    # Indjija below EU roles that need a Blue Card.
+    allowed = expand_codes(Config.ALLOWED_COUNTRIES)
+    if allowed and location_countries(location) & allowed:
+        return 1.0
     if not location.strip() or location.strip().lower() in ('not stated', 'n/a', 'remote'):
         return 1.0
     return Config.NON_EUROPE_PREFERENCE
@@ -1857,6 +1868,31 @@ TITLE_BOOST_MULTIPLIER = 1.4  # 40% bonus when role matches title
 # not allowed to lift it. A title-only listing, with no description to read,
 # still gets the boost, since the title is all the evidence there is.
 TITLE_BOOST_MIN_BASE = 20.0
+
+# ── Target-role title, for the direct and regional messages ───────────────────
+# Those two messages have low score bars (35 and 20), because company boards
+# and local boards give little text to score. A one-skill match plus a sector
+# word clears them, so on 20.10 they carried a production worker, a finance
+# applications analyst, an SAP consultant, a textile pattern maker and a UX
+# designer. Both now also require a title that names a target role: an
+# engineer or technician in any of the languages the boards use, a sales role,
+# a TITLE_BOOST_KEYWORDS role, or one of the user's TITLE_SCREEN_TERMS. The
+# main digest is unchanged; its bar of 40 already needs a real match.
+_TARGET_ROLE = re.compile(
+    r'\b(?:engineer\w*|ingeni\w*|ingegner\w*|inzenjer\w*|inzynier\w*|inzenyr\w*|inginer\w*|'
+    r'insinoori\w*|konstrukt\w*|techni\w*|tehnic\w*|technik\w*|projektant\w*|'
+    r'sales|vertrieb\w*|prodaj\w*|komercijal\w*|business development|account manager|'
+    r'qa|test\w*|automati\w*)')
+
+
+def is_target_role_title(title: str) -> bool:
+    """True when a job title names one of the roles the digest is for."""
+    folded = fold_diacritics(title or '')
+    if _TARGET_ROLE.search(folded):
+        return True
+    if any(keyword in folded for keyword in TITLE_BOOST_KEYWORDS):
+        return True
+    return any(fold_diacritics(term) in folded for term in (Config.TITLE_SCREEN_TERMS or ()))
 
 # ── Sector boost, companies/descriptions in these industries score higher ────
 SECTOR_BOOST_KEYWORDS = [

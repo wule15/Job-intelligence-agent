@@ -2,7 +2,7 @@
 python-dotenv==1.0.0
 
 # HTTP and HTML parsing. Every connector uses these.
-requests==2.31.0
+requests==2.32.4
 beautifulsoup4==4.12.0
 
 # Job board clients

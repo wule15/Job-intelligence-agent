@@ -303,6 +303,11 @@ class Config:
     DIRECT_MIN_SCORE = (
         score_setting(os.getenv("DIRECT_MIN_SCORE"), DIGEST_MIN_SCORE, "DIRECT_MIN_SCORE")
         if (os.getenv("DIRECT_MIN_SCORE") or '').strip() else None)
+    # ROLE_TITLE_GATE: the direct and regional messages take only jobs whose
+    # title names a target role (core/job_filter.is_target_role_title). On
+    # unless set to 0, false, no or off.
+    ROLE_TITLE_GATE = (os.getenv("ROLE_TITLE_GATE") is None
+                       or flag_setting(os.getenv("ROLE_TITLE_GATE")))
     # Slots in the main digest, a ceiling like every slot count. Blank means 10.
     MAIN_DIGEST_SIZE = count_setting(
         os.getenv("MAIN_DIGEST_SIZE"), 10, "MAIN_DIGEST_SIZE")
