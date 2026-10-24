@@ -19,8 +19,12 @@ import xml.etree.ElementTree as ET
 import requests
 import time
 from datetime import datetime
+from functools import lru_cache
 from urllib.parse import quote, urlparse
+from core.config import Config
 from core.countries import expand_codes, is_remote_place, iso_name, location_countries
+from core.job_filter import TITLE_BOOST_KEYWORDS
+from core.multilingual import fold_diacritics
 from core.utils import setup_logging
 
 logger = setup_logging('sources.free_boards')
@@ -148,12 +152,63 @@ def remote_at(place):
     return place if is_remote_place(place) else f"Remote, {place}"
 
 
+# ── Role terms, the title rule for remote boards ──────────────────────────────
+# A remote board returns whatever is newest, and most of it is software, data
+# and product work. Until 24.10 these boards kept a job when its advert held
+# one of fifteen CV skills as a plain substring, and with "Make" and "Git"
+# among them that was nearly every advert. Now a remote board keeps a job only
+# when its title names a role the run searches for: the last two words of
+# each query that ends in a role word ("remote technical sales engineer"
+# gives "sales engineer"), plus TITLE_BOOST_KEYWORDS and the user's
+# TITLE_SCREEN_TERMS. Two words, because one would be "engineer" and keep
+# every software engineer. Whole words, so "test engineer" does not match
+# "Contest Engineer". The title only, because an advert's text names
+# everything.
+ROLE_WORDS = ('engineer', 'specialist', 'representative', 'consultant', 'strategist',
+              'writer', 'setter', 'intern', 'trainee', 'technician')
+
+
+def strip_remote(query):
+    """The query without a leading "remote "."""
+    return re.sub(r'^remote\s+', '', (query or '').strip(), flags=re.IGNORECASE)
+
+
+def role_terms(queries):
+    """The role phrases remote-board titles are checked against, lowercase,
+    without repeats, query roles first."""
+    terms = []
+    for query in queries:
+        words = strip_remote(query).lower().split()
+        if len(words) >= 2 and words[-1] in ROLE_WORDS:
+            terms.append(' '.join(words[-2:]))
+    terms += TITLE_BOOST_KEYWORDS
+    terms += [term.lower() for term in Config.TITLE_SCREEN_TERMS or ()]
+    return list(dict.fromkeys(terms))
+
+
+@lru_cache(maxsize=8)
+def _role_pattern(roles):
+    terms = sorted({fold_diacritics(r).strip() for r in roles if r and r.strip()},
+                   key=len, reverse=True)
+    if not terms:
+        return None
+    return re.compile(r'(?<!\w)(?:' + '|'.join(re.escape(t) for t in terms) + r')s?(?!\w)')
+
+
+def title_names_role(title, roles):
+    """True when the title holds one of the role phrases as whole words.
+    Case and accents are ignored, and a plural ("Sales Engineers") counts."""
+    pattern = _role_pattern(tuple(roles))
+    return bool(pattern and pattern.search(fold_diacritics(title)))
+
+
 # ── RemoteOK ──────────────────────────────────────────────────────────────────
 
-def search_remoteok(keywords):
+def search_remoteok(roles):
     """
     RemoteOK public API, https://remoteok.com/api
-    Returns all remote jobs; we filter by keyword client-side.
+    Returns all remote jobs; we keep the ones whose title names one of the
+    roles (title_names_role).
     Free, no key, ~1 req/s polite limit.
 
     The location comes from the API's own field, where the board says the
@@ -167,7 +222,6 @@ def search_remoteok(keywords):
         return []
 
     jobs = []
-    kw_lower = [k.lower() for k in keywords]
 
     for item in data:
         if not isinstance(item, dict) or 'position' not in item:
@@ -175,10 +229,8 @@ def search_remoteok(keywords):
 
         title = item.get('position', '')
         desc = item.get('description', '') or ''
-        tags = ' '.join(item.get('tags', []))
-        text = (title + ' ' + desc + ' ' + tags).lower()
 
-        if not any(k in text for k in kw_lower):
+        if not title_names_role(title, roles):
             continue
 
         jobs.append(_job(
@@ -196,10 +248,11 @@ def search_remoteok(keywords):
 
 # ── Remotive ──────────────────────────────────────────────────────────────────
 
-def search_remotive(keywords):
+def search_remotive(roles):
     """
     Remotive API, https://remotive.com/api/remote-jobs
-    Does NOT support multi-word queries well; fetch all and filter client-side.
+    Does NOT support multi-word queries well; fetch all and keep the titles
+    that name one of the roles (title_names_role).
     Free, no key.
     """
     logger.info("[Remotive] Fetching all remote jobs...")
@@ -207,14 +260,11 @@ def search_remotive(keywords):
     if not data:
         return []
 
-    kw_lower = [k.lower() for k in keywords]
     jobs = []
     for item in data.get('jobs', []):
         title = item.get('title', '')
         desc = item.get('description', '') or ''
-        tags = ' '.join(item.get('tags', []) if isinstance(item.get('tags'), list) else [])
-        text = (title + ' ' + desc + ' ' + tags).lower()
-        if not any(k in text for k in kw_lower):
+        if not title_names_role(title, roles):
             continue
         salary = item.get('salary') or None
         jobs.append(_job(
@@ -232,20 +282,24 @@ def search_remotive(keywords):
 
 # ── Arbeitnow ─────────────────────────────────────────────────────────────────
 
-ARBEITNOW_MAX_QUERIES = 15
-
-def search_arbeitnow(query, pages=3):
+def search_arbeitnow(roles, pages=2):
     """
     Arbeitnow public job board API, https://www.arbeitnow.com/api/job-board-api
-    Supports ?search= and ?page=. Free, no key.
+    Free, no key. Fetched once a run, and the titles that name one of the
+    roles are kept (title_names_role).
+
+    No search word is sent. The API ignores it: on 24.10 "sales engineer",
+    "mechanical engineer" and no word at all returned the same 300 jobs, so
+    the fifteen searches a run used to make fetched the same feed fifteen
+    times and got the host rate limited.
     """
-    logger.info(f"[Arbeitnow] Searching: {query}")
+    logger.info("[Arbeitnow] Fetching jobs...")
     jobs = []
 
     for page in range(1, pages + 1):
         data = _get(
             'https://www.arbeitnow.com/api/job-board-api',
-            params={'search': query, 'page': page}
+            params={'page': page}
         )
         if not data or not data.get('data'):
             break
@@ -253,6 +307,8 @@ def search_arbeitnow(query, pages=3):
         for item in data['data']:
             # Only remote or internationally applicable
             if not item.get('remote') and item.get('location', '').lower() not in ('', 'remote', 'worldwide'):
+                continue
+            if not title_names_role(item.get('title', ''), roles):
                 continue
 
             jobs.append(_job(
@@ -267,7 +323,7 @@ def search_arbeitnow(query, pages=3):
         if len(data['data']) < 10:
             break  # Last page
 
-    logger.info(f"[Arbeitnow] Found {len(jobs)} jobs for '{query}'")
+    logger.info(f"[Arbeitnow] Matched {len(jobs)} jobs")
     return jobs
 
 
@@ -279,7 +335,7 @@ def search_arbeitnow(query, pages=3):
 MUSE_REMOTE_LOCATION = 'Flexible / Remote'
 
 
-def search_the_muse(keywords, pages=3):
+def search_the_muse(roles, pages=3):
     """
     The Muse public API, https://www.themuse.com/api/public/jobs
     No key required.
@@ -296,7 +352,6 @@ def search_the_muse(keywords, pages=3):
     """
     import re
     logger.info("[The Muse] Fetching remote jobs...")
-    kw_lower = [k.lower() for k in keywords]
     jobs = []
 
     for page in range(1, pages + 1):
@@ -325,9 +380,8 @@ def search_the_muse(keywords, pages=3):
             title = item.get('name', '')
             desc_raw = item.get('contents', '')
             desc = re.sub(r'<[^>]+>', ' ', desc_raw)
-            text = (title + ' ' + desc).lower()
 
-            if not any(k in text for k in kw_lower):
+            if not title_names_role(title, roles):
                 continue
 
             jobs.append(_job(
@@ -397,11 +451,11 @@ def _wwr_country(raw):
     return re.sub(r'^[^A-Za-z]+', '', (raw or '').strip()).strip()
 
 
-def search_weworkremotely(keywords):
+def search_weworkremotely(roles):
     """
     We Work Remotely RSS feed, https://weworkremotely.com/remote-jobs.rss
     Free, no key. High-quality curated remote listings.
-    Client-side keyword filtering.
+    Keeps the titles that name one of the roles (title_names_role).
 
     An item's country, when the feed gives one, is where the hire must live,
     the same country its page's JobPosting data names, so the job is stored
@@ -420,7 +474,6 @@ def search_weworkremotely(keywords):
         logger.warning(f"[WeWorkRemotely] Failed: {e}")
         return []
 
-    kw_lower = [k.lower() for k in keywords]
     jobs = []
 
     for item in root.findall('.//item'):
@@ -435,8 +488,7 @@ def search_weworkremotely(keywords):
         else:
             company, job_title = '', title
 
-        text = (job_title + ' ' + desc).lower()
-        if not any(k in text for k in kw_lower):
+        if not title_names_role(job_title, roles):
             continue
 
         country = _wwr_country(item.findtext('country'))
@@ -909,72 +961,72 @@ def search_reed(query, location='Remote', results=20):
 class FreeJobSearcher:
     """
     Searches all free sources in one call.
-    Accepts a list of search queries and a keyword list for client-side filtering.
+    Accepts a list of search queries. The remote boards (1 to 7) keep only
+    the jobs whose title names a role from those queries (role_terms).
     """
 
-    def search_all(self, queries, keywords=None):
+    def search_all(self, queries):
         """
         Args:
             queries:  list of query strings (e.g. ["remote engineer", "sales engineer"])
-            keywords: list of keywords for client-side filtering on sources that
-                      don't support server-side search (e.g. RemoteOK)
         Returns:
             Deduplicated list of job dicts
         """
-        keywords = keywords or queries
+        roles = role_terms(queries)
         all_jobs = []
 
-        # 1. RemoteOK, fetch once, filter client-side
+        # 1. RemoteOK, fetch once, keep the role titles
         try:
-            all_jobs.extend(search_remoteok(keywords))
+            all_jobs.extend(search_remoteok(roles))
             time.sleep(1)  # Polite rate limit
         except Exception as e:
             logger.warning(f"RemoteOK failed: {e}")
 
-        # 2. Remotive, fetch all, filter by keywords client-side
+        # 2. Remotive, fetch all, keep the role titles
         try:
-            all_jobs.extend(search_remotive(keywords))
+            all_jobs.extend(search_remotive(roles))
             time.sleep(1)
         except Exception as e:
             logger.warning(f"Remotive skipped: {e}")
 
-        # 3. Arbeitnow, one request per query. Its search is broad (two
-        #    different queries returned the same 117 jobs), so the first
-        #    ARBEITNOW_MAX_QUERIES are enough, and it rate limits a long run.
-        for q in queries[:ARBEITNOW_MAX_QUERIES]:
-            try:
-                all_jobs.extend(search_arbeitnow(q, pages=2))
-                time.sleep(0.5)
-            except Exception as e:
-                logger.warning(f"Arbeitnow skipped for '{q}': {e}")
-
-        # 4. The Muse, fetch recent, filter by keywords client-side
+        # 3. Arbeitnow, fetched once: it ignores the search word, see
+        #    search_arbeitnow
         try:
-            all_jobs.extend(search_the_muse(keywords, pages=5))
+            all_jobs.extend(search_arbeitnow(roles))
+            time.sleep(0.5)
+        except Exception as e:
+            logger.warning(f"Arbeitnow skipped: {e}")
+
+        # 4. The Muse, fetch recent, keep the role titles
+        try:
+            all_jobs.extend(search_the_muse(roles, pages=5))
             time.sleep(1)
         except Exception as e:
             logger.warning(f"The Muse skipped: {e}")
 
-        # 5. Jobicy, top keywords as tags
-        jobicy_tags = keywords[:5] if keywords else queries[:5]
+        # 5. Jobicy, the first five queries as tags. Its tag search is loose
+        #    (the tag "sales engineer" returns recruiters and analysts), so
+        #    the titles are checked here too.
+        jobicy_tags = list(dict.fromkeys(strip_remote(q) for q in queries))[:5]
         for tag in jobicy_tags:
             try:
-                all_jobs.extend(search_jobicy(tag))
+                all_jobs.extend(j for j in search_jobicy(tag) if title_names_role(j['title'], roles))
                 time.sleep(0.5)
             except Exception as e:
                 logger.warning(f"Jobicy skipped for '{tag}': {e}")
 
-        # 6. We Work Remotely, fetch RSS once, filter client-side
+        # 6. We Work Remotely, fetch RSS once, keep the role titles
         try:
-            all_jobs.extend(search_weworkremotely(keywords))
+            all_jobs.extend(search_weworkremotely(roles))
             time.sleep(1)
         except Exception as e:
             logger.warning(f"WeWorkRemotely skipped: {e}")
 
-        # 7. Himalayas, remote-only, no key, startup-heavy
+        # 7. Himalayas, remote-only, no key, startup-heavy. Searched by query,
+        #    and the titles are checked the same way.
         for q in queries[:3]:
             try:
-                all_jobs.extend(search_himalayas(q))
+                all_jobs.extend(j for j in search_himalayas(q) if title_names_role(j['title'], roles))
                 time.sleep(0.5)
             except Exception as e:
                 logger.warning(f"Himalayas skipped for '{q}': {e}")
@@ -1079,8 +1131,7 @@ class FreeJobSearcher:
 if __name__ == '__main__':
     searcher = FreeJobSearcher()
     jobs = searcher.search_all(
-        queries=['remote engineer', 'sales engineer', 'remote technical'],
-        keywords=['engineer', 'sales', 'technical', 'remote']
+        queries=['remote sales engineer', 'application engineer', 'remote test engineer'],
     )
     print(f"\nFound {len(jobs)} jobs:")
     for j in jobs[:10]:

@@ -427,7 +427,6 @@ class SmartJobSearcher:
 
         # Build intelligent queries, sorted by specificity (longest first)
         queries = self.build_search_queries()
-        top_keywords = self.extract_top_skills(limit=15)
 
         # Split queries by specificity tier so each source gets the queries it's best at.
         # Specific (multi-word, skill-named) → paid/premium sources with full descriptions.
@@ -471,10 +470,12 @@ class SmartJobSearcher:
                 r.jobs.extend(self.jsearch.search_jobs(query, num_pages=1))
         results.append(r)
 
-        # 3. Free aggregators, all queries, no quota
+        # 3. Free aggregators, all queries, no quota. The remote boards among
+        #    them check titles against the roles in these queries, not against
+        #    CV skills, see free_boards.role_terms.
         print(f"\n[*] Searching free sources...")
         with source_health.track('Free aggregators', queries=len(queries)) as r:
-            r.jobs = self.free_search.search_all(queries=queries, keywords=top_keywords)
+            r.jobs = self.free_search.search_all(queries=queries)
         results.append(r)
 
         # 4. LinkedIn via the public guest endpoint. Replaced the RSS

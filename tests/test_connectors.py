@@ -185,13 +185,16 @@ class TestFreeBoards:
     """Same approach for the keyless aggregators."""
 
     @pytest.mark.parametrize('fixture, call', [
-        ('remoteok', lambda: free_boards.search_remoteok(['engineer', 'developer'])),
-        ('remotive', lambda: free_boards.search_remotive(['engineer', 'developer'])),
+        # Roles that match the captured titles, so the parse is exercised and
+        # not filtered away by the title rule.
+        ('remoteok', lambda: free_boards.search_remoteok(['our team'])),
+        ('remotive', lambda: free_boards.search_remotive(['graphic designer'])),
         ('jobicy', lambda: free_boards.search_jobicy('engineering')),
     ])
     def test_parses_a_real_response(self, fixture, call, monkeypatch):
         monkeypatch.setattr(free_boards, '_get', lambda url, params=None: load(fixture))
         jobs = call()
+        assert jobs, f'{fixture} parsed no jobs'
         for job in jobs:
             missing = REQUIRED_FIELDS - set(job)
             assert not missing, f'{fixture} job is missing {missing}'

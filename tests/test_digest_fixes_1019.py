@@ -60,10 +60,6 @@ def test_bundesagentur_stops_after_first_refusal(monkeypatch):
     assert len(calls) == 1
 
 
-def test_arbeitnow_query_cap_is_small():
-    assert 0 < free_boards.ARBEITNOW_MAX_QUERIES <= 20
-
-
 def test_title_only_budget_covers_a_normal_run():
     # Live runs had 136 to 144 title-only jobs pass the screen.
     assert ats.DETAIL_MAX_FETCHES >= 145

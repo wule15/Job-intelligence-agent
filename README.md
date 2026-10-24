@@ -54,7 +54,12 @@ SOURCES
                           Federal Employment Agency, refuses every request
                           with HTTP 403 so far), Adzuna, Jooble and Reed
                           (the last three need a free key), plus an optional
-                          local board switched on with REGIONAL_BOARDS
+                          local board switched on with REGIONAL_BOARDS.
+                          The seven remote boards keep a job only when its
+                          title names a role from the queries ("sales
+                          engineer" from "remote technical sales engineer")
+                          or the target-role list. Arbeitnow is read once a
+                          run, because it ignores the search word
   LinkedIn                Public guest endpoint, no authentication. Cards
                           have no text; the posting is fetched in ENRICH
   JSearch                 RapidAPI, metered, capped by JSEARCH_BUDGET
@@ -380,7 +385,7 @@ Python 3.10 or newer: the code uses 3.10 syntax, and the pinned `ddgs` release r
 | Tests | pytest |
 | Normalisation | standard library only, `re` and `urllib.parse` |
 
-1241 tests, covering scoring, filtering, title rules, work eligibility, language rules, deduplication, storage, the send history, the pre-send liveness check, source health, digest composition and volume, the scam screen, the SSRF guard on link checking, retry policy, the Cloud Run wrapper, local-language scoring and three regressions that each cost real results. Tests run against fixtures and temporary files, and no test makes a network call.
+1267 tests, covering scoring, filtering, title rules, work eligibility, language rules, deduplication, storage, the send history, the pre-send liveness check, source health, digest composition and volume, the scam screen, the SSRF guard on link checking, retry policy, the Cloud Run wrapper, local-language scoring and three regressions that each cost real results. Tests run against fixtures and temporary files, and no test makes a network call.
 
 One file, `tests/test_end_to_end.py`, runs a whole day through the real pipeline in order: search, dedup, description fetch, scoring, storage, digest selection and sending. Every network call is replaced: fake job boards (one of which crashes), a fixed advert page for the description fetch, a link check that always answers "live", a temporary database, and Telegram's HTTP call captured instead of sent. It then checks what would have reached the chat: the strong match is there once, the weak match and the dealbreaker are not, the local-language advert lands in the regional message, the crashing source is named, nothing repeats the next day, a job reposted under a new link after the cleanup is not sent again, every sent job is logged with its full link, and a failed send goes out the next day. The duplicate check tests three dedup layers together, so switching off one layer does not fail it.
 
@@ -454,7 +459,7 @@ Or point `MASTER_CV_PATH` in `core/.env` at another file. Fill in the `variants:
 
 ```bash
 pip install -r requirements-dev.txt
-python -m pytest              # 1241 tests, no network
+python -m pytest              # 1267 tests, no network
 python job_search_smart.py    # one real run: search, score, store
 python telegram_sender.py     # send the digest
 ```
@@ -582,7 +587,7 @@ The percentages are a ranking device, not a probability. A score starts as the c
 
 The three I would raise first if you were reviewing this.
 
-**The title rules are hand-kept keyword lists.** Senior, software, support and trade titles are matched by patterns I wrote and extend by hand. They miss reversed titles: "Backend Engineer" is dropped, but "Engineer, Backend" and "Developer, Python" get through. Every new title family that slips past needs a new pattern, and nothing finds those families except reading the digest.
+**The title rules are hand-kept keyword lists.** Senior, software, support and trade titles are matched by patterns I wrote and extend by hand. They miss reversed titles: "Backend Engineer" is dropped, but "Engineer, Backend" and "Developer, Python" get through. Every new title family that slips past needs a new pattern, and nothing finds those families except reading the digest. The remote boards' rule errs the other way: a remote job whose title names no searched role, an "Account Executive" for example, is never stored, however good it is.
 
 **Fit is judged by keyword scoring.** Skill terms are matched with a synonym map and boosted by role and sector. It has no notion of meaning, so a job that lists technologies without requiring them scores the same as one that requires them. On one replayed batch, the October rule changes raised the share of plausible fits to about 50 percent. On a live day the useful share was about 20 percent.
 
