@@ -167,6 +167,12 @@ def remote_at(place):
 ROLE_WORDS = ('engineer', 'specialist', 'representative', 'consultant', 'strategist',
               'writer', 'setter', 'intern', 'trainee', 'technician')
 
+# Role phrases that mean software on a remote board, so they never pass the
+# title rule there, whatever the queries or TITLE_BOOST_KEYWORDS say. On
+# 26.10 "systems engineer" let Canonical's "Distributed Systems Engineer"
+# into the main digest. The ranking boost for these titles is unchanged.
+REMOTE_BOARD_EXCLUDED_ROLES = ('systems engineer',)
+
 
 def strip_remote(query):
     """The query without a leading "remote "."""
@@ -183,7 +189,7 @@ def role_terms(queries):
             terms.append(' '.join(words[-2:]))
     terms += TITLE_BOOST_KEYWORDS
     terms += [term.lower() for term in Config.TITLE_SCREEN_TERMS or ()]
-    return list(dict.fromkeys(terms))
+    return [term for term in dict.fromkeys(terms) if term not in REMOTE_BOARD_EXCLUDED_ROLES]
 
 
 @lru_cache(maxsize=8)

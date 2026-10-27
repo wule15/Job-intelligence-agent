@@ -40,6 +40,18 @@ class TestRoleTerms:
     def test_the_target_role_list_is_included(self):
         assert 'technical account' in free_boards.role_terms([])
 
+    def test_systems_engineer_is_not_a_remote_board_role(self):
+        # On remote boards it is software: Canonical's "Distributed Systems
+        # Engineer" reached the main digest on 26.10 through this term.
+        roles = free_boards.role_terms(['remote embedded systems engineer'])
+        assert 'systems engineer' not in roles
+        assert not free_boards.title_names_role('Distributed Systems Engineer', roles)
+
+    def test_systems_engineer_still_lifts_the_score(self):
+        # Only the remote-board title rule drops it; ranking keeps the boost.
+        from core.job_filter import TITLE_BOOST_KEYWORDS
+        assert 'systems engineer' in TITLE_BOOST_KEYWORDS
+
     def test_title_screen_terms_are_included(self, monkeypatch):
         monkeypatch.setattr(Config, 'TITLE_SCREEN_TERMS', ['Inženjer'])
         assert free_boards.title_names_role('Inzenjer prodaje', free_boards.role_terms([]))
