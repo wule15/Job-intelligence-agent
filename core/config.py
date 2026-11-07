@@ -341,6 +341,10 @@ class Config:
     WEEKLY_DIGEST_DAY = weekday_setting(os.getenv("WEEKLY_DIGEST_DAY"), 0, "WEEKLY_DIGEST_DAY")
     WEEKLY_DIGEST_SIZE = count_setting(
         os.getenv("WEEKLY_DIGEST_SIZE"), 20, "WEEKLY_DIGEST_SIZE")
+    # Jobs in the separate weekly regional message, sent only when the region
+    # is configured (REGIONAL_MATCH_TERMS). Blank means 5.
+    WEEKLY_REGIONAL_SIZE = count_setting(
+        os.getenv("WEEKLY_REGIONAL_SIZE"), 5, "WEEKLY_REGIONAL_SIZE")
     # Employers to rank higher, comma separated, each matched as whole words
     # in the company name ("atlas copco" matches "Atlas Copco Group"). Their
     # jobs are multiplied by PRIORITY_COMPANY_BOOST, 1.0 to 2.0. Both empty by

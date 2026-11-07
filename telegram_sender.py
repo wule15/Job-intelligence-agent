@@ -1347,6 +1347,23 @@ def _weekly(failures):
         return _exit_code(failures)
 
     reset_liveness()
+
+    # The home-market jobs get their own short message, sent first and marked
+    # sent before the main list is chosen, so no job is in both. Same rules as
+    # the daily regional message (its lower score bar, the role-title gate).
+    if _regional_configured():
+        regional = get_regional_jobs(limit=Config.WEEKLY_REGIONAL_SIZE, is_live=is_job_live)
+        _log_selected('weekly regional', regional)
+        regional_msg, regional_ids = format_regional_digest(regional)
+        if not regional_ids:
+            regional_msg = format_empty_section(
+                '🌍', Config.REGIONAL_DIGEST_LABEL or 'Regional jobs', Config.REGIONAL_MIN_SCORE)
+        if send_telegram_message(regional_msg):
+            if regional_ids and not mark_jobs_sent(regional_ids):
+                failures.append('marking the weekly regional jobs sent')
+        else:
+            failures.append('the weekly regional message')
+
     print(f"[*] Weekly digest: choosing the {Config.WEEKLY_DIGEST_SIZE} best unsent jobs...")
     jobs = get_unsent_jobs(limit=Config.WEEKLY_DIGEST_SIZE, is_live=is_job_live)
     _log_selected('weekly', jobs)

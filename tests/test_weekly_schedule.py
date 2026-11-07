@@ -112,6 +112,41 @@ def test_weekly_mode_with_nothing_to_send_says_so(quiet, monkeypatch):
     assert len(sent) == 1 and 'Weekly Job Digest' in sent[0]
 
 
+def test_weekly_domestic_message_goes_first_with_five_jobs(quiet, monkeypatch):
+    sent, marked, _ = quiet
+    asked = {}
+
+    def regional(limit=None, **kwargs):
+        asked['limit'] = limit
+        return [_job(n, 30.0) for n in range(101, 101 + limit)]
+    monkeypatch.setattr(telegram_sender, '_now', lambda: MONDAY)
+    monkeypatch.setattr(telegram_sender, '_regional_configured', lambda: True)
+    monkeypatch.setattr(telegram_sender, 'get_regional_jobs', regional)
+    monkeypatch.setattr(Config, 'WEEKLY_REGIONAL_SIZE', 5, raising=False)
+
+    assert telegram_sender.main() == 0
+    assert asked['limit'] == 5
+    assert 'Sales Engineer 101' in sent[0] and 'Weekly Job Digest' in sent[1]
+    assert marked[0] == list(range(101, 106))
+
+
+def test_weekly_domestic_message_skipped_without_a_region(quiet, monkeypatch):
+    sent, _, _ = quiet
+    monkeypatch.setattr(telegram_sender, '_now', lambda: MONDAY)
+    called = []
+    monkeypatch.setattr(telegram_sender, 'get_regional_jobs', lambda **kw: called.append(1) or [])
+    telegram_sender.main()
+    assert called == [] and all('Weekly Job Digest' in message for message in sent)
+
+
+def test_weekly_domestic_message_says_so_when_empty(quiet, monkeypatch):
+    sent, _, _ = quiet
+    monkeypatch.setattr(telegram_sender, '_now', lambda: MONDAY)
+    monkeypatch.setattr(telegram_sender, '_regional_configured', lambda: True)
+    assert telegram_sender.main() == 0
+    assert len(sent) == 2 and 'Weekly Job Digest' in sent[1]
+
+
 def test_daily_is_still_the_default(quiet, monkeypatch):
     sent, _, _ = quiet
     monkeypatch.setattr(Config, 'DIGEST_SCHEDULE', 'daily')
