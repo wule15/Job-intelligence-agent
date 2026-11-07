@@ -94,6 +94,27 @@ def factor_setting(raw, default, name=''):
     return min(2.0, max(1.0, value))
 
 
+_WEEKDAYS = ('monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday')
+
+
+def weekday_setting(raw, default, name=''):
+    """
+    A day of the week as 0 (Monday) to 6 (Sunday), from a name, a three-letter
+    abbreviation or the number. Blank gives the default, and so does anything
+    else, with one printed warning, so a typo cannot stop the scheduled run.
+    """
+    text = str(raw or '').strip().lower()
+    if not text:
+        return int(default)
+    if text.isdigit() and int(text) < 7:
+        return int(text)
+    for index, day in enumerate(_WEEKDAYS):
+        if text in (day, day[:3]):
+            return index
+    print(f"[!] {name or 'Weekday setting'} is not a day of the week, using {_WEEKDAYS[default]}")
+    return int(default)
+
+
 def flag_setting(raw):
     """An on/off setting. On only for 1, true, yes or on, in any case."""
     return str(raw or '').strip().lower() in ('1', 'true', 'yes', 'on')
@@ -311,6 +332,15 @@ class Config:
     # Slots in the main digest, a ceiling like every slot count. Blank means 10.
     MAIN_DIGEST_SIZE = count_setting(
         os.getenv("MAIN_DIGEST_SIZE"), 10, "MAIN_DIGEST_SIZE")
+    # When Telegram hears from the engine. "daily" (blank) sends the three
+    # messages every run. "weekly" still searches and stores every run, but
+    # sends only on WEEKLY_DIGEST_DAY: one message with the WEEKLY_DIGEST_SIZE
+    # best unsent jobs, ranked across every source (telegram_sender.main).
+    DIGEST_SCHEDULE = ('weekly' if (os.getenv("DIGEST_SCHEDULE") or '').strip().lower() == 'weekly'
+                       else 'daily')
+    WEEKLY_DIGEST_DAY = weekday_setting(os.getenv("WEEKLY_DIGEST_DAY"), 0, "WEEKLY_DIGEST_DAY")
+    WEEKLY_DIGEST_SIZE = count_setting(
+        os.getenv("WEEKLY_DIGEST_SIZE"), 20, "WEEKLY_DIGEST_SIZE")
     # Employers to rank higher, comma separated, each matched as whole words
     # in the company name ("atlas copco" matches "Atlas Copco Group"). Their
     # jobs are multiplied by PRIORITY_COMPANY_BOOST, 1.0 to 2.0. Both empty by

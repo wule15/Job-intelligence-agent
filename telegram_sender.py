@@ -1056,6 +1056,42 @@ def format_job_digest(jobs):
     message += _render_job_lines(jobs)
     return message, job_ids
 
+# Telegram refuses a message longer than this, counted on the text after the
+# HTML tags are read. Counting the raw HTML is stricter, so it is safe.
+TELEGRAM_MESSAGE_LIMIT = 4096
+
+
+def _now():
+    """The current time. A function so tests can set the day of the week."""
+    return datetime.now()
+
+
+def format_weekly_digest(jobs):
+    """
+    The weekly message: the week's best jobs, numbered in one list.
+
+    Twenty jobs can run past Telegram's limit, so the list is cut into as many
+    messages as it needs, each under TELEGRAM_MESSAGE_LIMIT, with the
+    numbering carried on. Returns (messages, job_ids).
+    """
+    label = f" {Config.DIGEST_LABEL}" if Config.DIGEST_LABEL else ""
+    header = (f"📅 <b>Weekly Job Digest</b>{label}\n"
+              f"<i>{_now().strftime('%Y-%m-%d')}, the week's best</i>\n\n")
+    if not jobs:
+        return [header + "No new jobs cleared the score bar this week."], []
+
+    header += f"<b>{len(jobs)}</b> jobs:\n\n"
+    messages, current = [], header
+    for number, job in enumerate(jobs, 1):
+        block = _render_job_lines([job]).replace('<b>1. ', f'<b>{number}. ', 1)
+        if len(current) + len(block) > TELEGRAM_MESSAGE_LIMIT - 100:
+            messages.append(current)
+            current = f"📅 <b>Weekly Job Digest</b>{label}, continued\n\n"
+        current += block
+    messages.append(current)
+    return messages, [job[0] for job in jobs]
+
+
 def format_direct_digest(jobs):
     """
     Format the direct-from-company digest for Telegram.
@@ -1204,6 +1240,9 @@ def main():
     if ineligible:
         print(f"[*] Held back {ineligible} stored jobs that fail today's hard rules")
 
+    if Config.DIGEST_SCHEDULE == 'weekly':
+        return _weekly(failures)
+
     # Every job chosen below is checked for a closed posting first, within
     # one budget for the whole run.
     reset_liveness()
@@ -1286,6 +1325,42 @@ def main():
     else:
         print("[!] Failed to send - not marking jobs as sent")
         failures.append('the main digest')
+    return _exit_code(failures)
+
+
+def _weekly(failures):
+    """
+    The weekly schedule. The search has already stored today's jobs, so on any
+    other day there is nothing to do. On WEEKLY_DIGEST_DAY the best unsent
+    jobs go out in one list, chosen the way the main digest chooses (score
+    bar, two per employer, closed postings skipped), from every source at
+    once. The search keeps a week of jobs, so the list covers the week.
+
+    A list split over several messages is marked sent only when every part
+    went out, so a failed part means the whole list is offered again next
+    week rather than half of it lost.
+    """
+    days = ('Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday')
+    if _now().weekday() != Config.WEEKLY_DIGEST_DAY:
+        print(f"[*] Weekly schedule: jobs stored, nothing sent until "
+              f"{days[Config.WEEKLY_DIGEST_DAY]}")
+        return _exit_code(failures)
+
+    reset_liveness()
+    print(f"[*] Weekly digest: choosing the {Config.WEEKLY_DIGEST_SIZE} best unsent jobs...")
+    jobs = get_unsent_jobs(limit=Config.WEEKLY_DIGEST_SIZE, is_live=is_job_live)
+    _log_selected('weekly', jobs)
+    _report_liveness()
+
+    messages, job_ids = format_weekly_digest(jobs)
+    messages[-1] += _health_note()
+    print(f"[*] Sending {len(job_ids)} jobs in {len(messages)} message(s)...")
+    if all([send_telegram_message(message) for message in messages]):
+        if job_ids and not mark_jobs_sent(job_ids):
+            failures.append('marking the weekly jobs sent')
+    else:
+        print("[!] Part of the weekly digest failed to send - not marking any jobs sent")
+        failures.append('the weekly digest')
     return _exit_code(failures)
 
 

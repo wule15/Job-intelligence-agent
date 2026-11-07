@@ -56,6 +56,7 @@ def public_default_settings(monkeypatch):
         'NON_EUROPE_PREFERENCE': 1.0, 'DIGEST_EXCLUDE_FILE': '',
         'DIGEST_MIN_SCORE': 15.0, 'REGIONAL_MIN_SCORE': 15.0,
         'DIRECT_MIN_SCORE': None, 'MAIN_DIGEST_SIZE': 10, 'ROLE_TITLE_GATE': False,
+        'DIGEST_SCHEDULE': 'daily', 'WEEKLY_DIGEST_DAY': 0, 'WEEKLY_DIGEST_SIZE': 20,
         'PRIORITY_COMPANIES': [], 'PRIORITY_COMPANY_BOOST': 1.0,
         'EARLY_CAREER_QUERIES': False, 'DIGEST_LABEL': '',
         'REGIONAL_DIGEST_LABEL': 'Regional jobs', 'REGIONAL_JOB_LOCATIONS': [],

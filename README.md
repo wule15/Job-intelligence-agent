@@ -282,6 +282,8 @@ Only what is in the code.
 
 **Composes the digest by score, not by quota.** The main digest takes up to ten jobs. Hand-saved jobs go first. After that, company boards and quality aggregators compete together on score; there are no separate quotas. Indeed, JSearch and WeWorkRemotely only fill slots left over. At most two jobs per employer, counted across all passes. Every slot except a hand-saved one must clear the score bar, so a thin day sends fewer jobs, and the run logs `Digest short: N/10 filled (score bar X, max 2 per company)`. That line names both possible causes but not which one applied. A separate message carries a shortlist drawn only from the employer boards. Both score bars are settings, and since every chosen job is logged with its score, a bar can be chosen from the log.
 
+**Can send weekly instead of daily.** With `DIGEST_SCHEDULE=weekly` the search still runs and stores jobs every day, but Telegram hears nothing until `WEEKLY_DIGEST_DAY` (Monday when blank). That day one message lists the `WEEKLY_DIGEST_SIZE` best unsent jobs (20 when blank), chosen the way the main digest chooses, from every source at once: score bar, two per employer, closed postings skipped. The direct and regional messages are not sent in this mode, and a list too long for one Telegram message is split into parts that are marked sent only if every part goes out. The search keeps a week of jobs, so the list covers the week. Daily is the default.
+
 **Screens for scams.** Known fake boards and free-hosting apply links are dropped before scoring. Softer signals a real employer never posts, apply-by-WhatsApp or Telegram, pay-to-work fees, reshipping fronts, heavily downrank the listing and flag it, and the flag is stored so it becomes a visible warning in the digest.
 
 **Refuses internal addresses when checking links.** Before a scraped apply link is fetched to see if it is still live, its target is checked, and a private, loopback or cloud-metadata address is refused, on every redirect hop. A stranger's listing cannot point the link checker at the local network.
@@ -386,7 +388,7 @@ Python 3.10 or newer: the code uses 3.10 syntax, and the pinned `ddgs` release r
 | Tests | pytest |
 | Normalisation | standard library only, `re` and `urllib.parse` |
 
-1269 tests, covering scoring, filtering, title rules, work eligibility, language rules, deduplication, storage, the send history, the pre-send liveness check, source health, digest composition and volume, the scam screen, the SSRF guard on link checking, retry policy, the Cloud Run wrapper, local-language scoring and three regressions that each cost real results. Tests run against fixtures and temporary files, and no test makes a network call.
+1283 tests, covering scoring, filtering, title rules, work eligibility, language rules, deduplication, storage, the send history, the pre-send liveness check, source health, digest composition and volume, the scam screen, the SSRF guard on link checking, retry policy, the Cloud Run wrapper, local-language scoring and three regressions that each cost real results. Tests run against fixtures and temporary files, and no test makes a network call.
 
 One file, `tests/test_end_to_end.py`, runs a whole day through the real pipeline in order: search, dedup, description fetch, scoring, storage, digest selection and sending. Every network call is replaced: fake job boards (one of which crashes), a fixed advert page for the description fetch, a link check that always answers "live", a temporary database, and Telegram's HTTP call captured instead of sent. It then checks what would have reached the chat: the strong match is there once, the weak match and the dealbreaker are not, the local-language advert lands in the regional message, the crashing source is named, nothing repeats the next day, a job reposted under a new link after the cleanup is not sent again, every sent job is logged with its full link, and a failed send goes out the next day. The duplicate check tests three dedup layers together, so switching off one layer does not fail it.
 
@@ -460,7 +462,7 @@ Or point `MASTER_CV_PATH` in `core/.env` at another file. Fill in the `variants:
 
 ```bash
 pip install -r requirements-dev.txt
-python -m pytest              # 1269 tests, no network
+python -m pytest              # 1283 tests, no network
 python job_search_smart.py    # one real run: search, score, store
 python telegram_sender.py     # send the digest
 ```
